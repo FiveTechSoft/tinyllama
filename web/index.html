@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- coi-serviceworker: inyecta COOP/COEP para habilitar SharedArrayBuffer
+     (pthreads WASM) en GitHub Pages. Recarga la pagina una vez la 1ra vez. -->
+<script src="coi-serviceworker.js"></script>
 <title>tinillama — chat con TinyLlama-1.1B en tu navegador</title>
 <style>
   :root { color-scheme: dark; }
@@ -46,6 +49,17 @@
   <button id="send" disabled>Enviar</button>
 </div>
 
+<script>
+  // captura errores JS/async y los muestra en la barra de estado
+  window.addEventListener('error', (e) => {
+    const s = document.getElementById('status');
+    if (s) s.textContent = 'Error JS: ' + e.message;
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const s = document.getElementById('status');
+    if (s) s.textContent = 'Error async: ' + ((e.reason && e.reason.message) || e.reason);
+  });
+</script>
 <script type="module">
   import { TinyLlama } from './tinyllama.js';
 
@@ -89,6 +103,10 @@
         topK: +$('topK').value,
       });
       for await (const chunk of gen) {
+        if (typeof chunk !== 'string') { // prefillDone
+          $('status').textContent = `Prefill ${chunk.prefillSeconds.toFixed(1)}s — generando…`;
+          continue;
+        }
         text += chunk;
         if (text.includes('</s>')) { text = text.split('</s>')[0]; break; }
         n++;
@@ -125,10 +143,16 @@
           $('status').textContent = `Descargando modelo… ${(f * 100).toFixed(0)}% (se cachea para próximas visitas)`;
         },
       });
-      $('status').textContent = 'Modelo cargado. ¡Chatea!';
+      $('status').textContent = `Modelo cargado (hilos: ${crossOriginIsolated ? navigator.hardwareConcurrency + ' pthreads' : '1 — sin SharedArrayBuffer'}). ¡Chatea!`;
       $('input').disabled = false;
       $('send').disabled = false;
       $('input').focus();
+      // #selftest: envia un mensaje corto automaticamente (diagnostico)
+      if (location.hash === '#selftest') {
+        $('maxTokens').value = 12;
+        $('input').value = 'What is happiness?';
+        send();
+      }
     } catch (e) {
       $('status').textContent = 'Error cargando el modelo: ' + e.message;
     }

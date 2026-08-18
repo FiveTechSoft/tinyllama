@@ -1,110 +1,89 @@
 /*
- * tinyllama.js - API cliente para el motor WASM de TinyLlama-1.1B
+ * tinyllama.js - API cliente para TinyLlama-1.1B en el navegador.
  *
- * Uso:
+ * La inferencia corre en un Web Worker (web/llm-worker.js) para no congelar
+ * la UI; esta clase es una envoltura con la misma API de siempre:
+ *
  *   import { TinyLlama } from './tinyllama.js';
- *   const llm = await TinyLlama.load({ onProgress: (f) => console.log(f) });
- *   for await (const text of llm.generate('The secret to happiness is', { maxTokens: 64 })) {
- *     process.stdout.write(text);
- *   }
- *
- * El modelo (tinillama.gguf) esta troceado en web/model/tinillama.gguf.NN
- * porque GitHub Pages no sirve archivos > 100 MB. Se descargan en paralelo,
- * se reensamblan en memoria WASM y los pesos Q4_0 se usan sin copia.
+ *   const llm = await TinyLlama.load({ onProgress: (f) => ... });
+ *   for await (const text of llm.generate(prompt, { maxTokens: 64, temp: 0.7, topK: 40 })) ...
  */
 
-import createModule from './tinyllama-engine.js';
-
 const DEFAULTS = {
-  modelBase: 'model/',     // donde viven manifest.json y los trozos
-  concurrency: 4,          // descargas paralelas de trozos
+  modelBase: 'model/',
+  concurrency: 4,
+  workerUrl: 'llm-worker.js',
 };
 
 export class TinyLlama {
-  #module;
-  #modelPtr;
+  #worker;
+  #seq = 0;
 
-  constructor(module, modelPtr) {
-    this.#module = module;
-    this.#modelPtr = modelPtr;
+  constructor(worker) {
+    this.#worker = worker;
+  }
+
+  /** Lanza el worker, descarga el modelo y carga el motor WASM. */
+  static load({ modelBase = DEFAULTS.modelBase, concurrency = DEFAULTS.concurrency,
+                workerUrl = DEFAULTS.workerUrl, onProgress } = {}) {
+    const worker = new Worker(workerUrl, { type: 'module' });
+    return new Promise((resolve, reject) => {
+      const onMsg = (e) => {
+        const m = e.data;
+        if (m.type === 'progress' && onProgress) onProgress(m.f);
+        else if (m.type === 'ready') {
+          worker.removeEventListener('message', onMsg);
+          resolve(new TinyLlama(worker));
+        } else if (m.type === 'error') {
+          worker.removeEventListener('message', onMsg);
+          reject(new Error(m.message));
+        }
+      };
+      worker.addEventListener('message', onMsg);
+      worker.addEventListener('error', (ev) => reject(new Error(ev.message)));
+      worker.postMessage({ cmd: 'load', modelBase, concurrency });
+    });
   }
 
   /**
-   * Descarga los trozos del modelo, los reensambla en memoria WASM y
-   * carga el motor. onProgress recibe la fraccion [0,1] descargada.
-   */
-  static async load({ modelBase = DEFAULTS.modelBase, concurrency = DEFAULTS.concurrency, onProgress } = {}) {
-    const manifest = await (await fetch(modelBase + 'manifest.json')).json();
-    const total = manifest.size;
-    const parts = manifest.parts;
-
-    // buffer destino en el heap JS
-    const bytes = new Uint8Array(total);
-    let downloaded = 0;
-
-    // offsets de cada trozo
-    let off = 0;
-    const offsets = parts.map(() => 0); // se rellena tras conocer tamanos
-
-    // descarga un trozo con su indice
-    const fetchPart = async (i) => {
-      const res = await fetch(modelBase + parts[i]);
-      if (!res.ok) throw new Error(`HTTP ${res.status} en ${parts[i]}`);
-      const buf = new Uint8Array(await res.arrayBuffer());
-      return { i, buf };
-    };
-
-    // pool de concurrencia
-    const results = new Array(parts.length);
-    let next = 0;
-    const worker = async () => {
-      while (next < parts.length) {
-        const i = next++;
-        const { buf } = await fetchPart(i);
-        results[i] = buf;
-        downloaded += buf.length;
-        if (onProgress) onProgress(Math.min(1, downloaded / total));
-      }
-    };
-    await Promise.all(Array.from({ length: concurrency }, worker));
-
-    // reensamblar
-    let pos = 0;
-    for (const buf of results) {
-      bytes.set(buf, pos);
-      pos += buf.length;
-    }
-    if (pos !== total) throw new Error(`Tamano incorrecto: ${pos} != ${total}`);
-
-    // crear modulo WASM y copiar el modelo a su memoria
-    const module = await createModule();
-    const ptr = module._malloc(total);
-    module.HEAPU8.set(bytes, ptr);
-    module._tl_init(ptr, total);
-
-    return new TinyLlama(module, ptr);
-  }
-
-  /**
-   * Genera texto. Devuelve un async generator que va soltando trozos
-   * de texto (streaming). Opciones: maxTokens, temp (0 = greedy), topK.
+   * Genera texto (async generator, streaming). La generacion ocurre en el
+   * worker; salir del bucle con break la cancela.
    */
   async *generate(prompt, { maxTokens = 128, temp = 0.7, topK = 40 } = {}) {
-    const M = this.#module;
-    M.ccall('tl_set_prompt', 'number', ['string'], [prompt]);
-    for (let i = 0; i < maxTokens; i++) {
-      const id = M._tl_step(temp, topK);
-      if (id < 0) break;
-      yield M.UTF8ToString(M._tl_token_str(id));
-      // ceder el hilo para que la UI respire entre tokens
-      await new Promise((r) => setTimeout(r, 0));
+    const id = ++this.#seq;
+    const queue = [];
+    let wake = null;
+    const onMsg = (e) => {
+      const m = e.data;
+      if (m.id !== id) return;
+      queue.push(m);
+      if (wake) { wake(); wake = null; }
+    };
+    this.#worker.addEventListener('message', onMsg);
+    this.#worker.postMessage({ cmd: 'generate', id, prompt, maxTokens, temp, topK });
+    try {
+      for (;;) {
+        while (queue.length) {
+          const m = queue.shift();
+          if (m.type === 'token') yield m.text;
+          else if (m.type === 'prefillDone') yield { prefillSeconds: m.seconds };
+          else if (m.type === 'done') return;
+          else if (m.type === 'error') throw new Error(m.message);
+        }
+        await new Promise((r) => { wake = r; });
+      }
+    } finally {
+      this.#worker.postMessage({ cmd: 'cancel', id });
+      this.#worker.removeEventListener('message', onMsg);
     }
   }
 
   /** Atajo: genera y devuelve el texto completo. */
   async complete(prompt, opts = {}) {
     let out = '';
-    for await (const t of this.generate(prompt, opts)) out += t;
+    for await (const t of this.generate(prompt, opts)) {
+      if (typeof t === 'string') out += t;
+    }
     return out;
   }
 }

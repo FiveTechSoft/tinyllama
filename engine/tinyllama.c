@@ -570,6 +570,9 @@ static inline float dot_f16(const float *a, const uint8_t *b, int n) {
 /* out[j] = x . W_row(j); dispatch on the tensor's quantization type */
 static void matmul_t(float *out, const float *x, const Tensor *W, int in_dim, int out_dim) {
     int64_t rb = tensor_row_bytes(W);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for (int j = 0; j < out_dim; j++) {
         const uint8_t *row = W->ptr + j * rb;
         switch (W->type) {
@@ -582,6 +585,9 @@ static void matmul_t(float *out, const float *x, const Tensor *W, int in_dim, in
 }
 
 static void matmul_f32(float *out, const float *x, const float *W, int in_dim, int out_dim) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for (int j = 0; j < out_dim; j++)
         out[j] = dot_f32(x, W + (int64_t)j * in_dim, in_dim);
 }
