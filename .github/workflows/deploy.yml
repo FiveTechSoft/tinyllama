@@ -1,0 +1,58 @@
+name: Build WASM & Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: emscripten/emsdk:3.1.61
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile engine to WebAssembly
+        run: |
+          mkdir -p site
+          emcc engine/tinyllama.c -O3 -msimd128 -o site/tinyllama-engine.js \
+            -s WASM=1 \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s MAXIMUM_MEMORY=2147483648 \
+            -s MODULARIZE=1 \
+            -s EXPORT_ES6=1 \
+            -s EXPORT_NAME=createTinyLlamaModule \
+            -s ENVIRONMENT=web \
+            -s EXPORTED_FUNCTIONS=_tl_init,_tl_set_prompt,_tl_step,_tl_token_str,_tl_generated,_malloc,_free \
+            -s EXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString
+
+      - name: Assemble site
+        run: |
+          cp web/index.html web/tinyllama.js site/
+          cp -r web/model site/model
+          ls -la site site/model | head -25
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

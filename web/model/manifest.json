@@ -1,0 +1,19 @@
+{
+ "name": "tinillama.gguf",
+ "size": 637699456,
+ "parts": [
+  "tinillama.gguf.00",
+  "tinillama.gguf.01",
+  "tinillama.gguf.02",
+  "tinillama.gguf.03",
+  "tinillama.gguf.04",
+  "tinillama.gguf.05",
+  "tinillama.gguf.06",
+  "tinillama.gguf.07",
+  "tinillama.gguf.08",
+  "tinillama.gguf.09",
+  "tinillama.gguf.10",
+  "tinillama.gguf.11",
+  "tinillama.gguf.12"
+ ]
+}

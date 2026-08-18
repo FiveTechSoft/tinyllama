@@ -1,0 +1,11 @@
+# Modelo completo local (se distribuye troceado en web/model/)
+model/tinillama.gguf
+
+# Herramientas locales de depuracion (llama.cpp, venv, tests)
+tools/
+
+# Binarios
+*.exe
+
+# Python
+__pycache__/

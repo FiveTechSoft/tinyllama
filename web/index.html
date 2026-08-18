@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tinillama — TinyLlama-1.1B en tu navegador</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #e6edf3; }
+  h1 { font-size: 1.4rem; }
+  .sub { color: #8b949e; font-size: .9rem; margin-bottom: 1.5rem; }
+  #bar { width: 100%; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: .5rem 0 1rem; }
+  #bar > div { height: 100%; width: 0%; background: #2f81f7; transition: width .2s; }
+  #status { font-size: .85rem; color: #8b949e; min-height: 1.2em; }
+  textarea { width: 100%; box-sizing: border-box; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .6rem; font: inherit; }
+  .row { display: flex; gap: .5rem; align-items: center; margin: .6rem 0; flex-wrap: wrap; }
+  label { font-size: .8rem; color: #8b949e; }
+  input[type=number] { width: 4.5rem; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .3rem; }
+  button { background: #238636; color: #fff; border: 0; border-radius: 6px; padding: .55rem 1.1rem; font: inherit; cursor: pointer; }
+  button:disabled { background: #21262d; color: #8b949e; cursor: default; }
+  #out { white-space: pre-wrap; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: .8rem; min-height: 6rem; margin-top: .8rem; }
+  code { background: #161b22; padding: .1rem .35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>tinillama</h1>
+<p class="sub">TinyLlama-1.1B (Q4_0, 608 MB) ejecutándose íntegramente en tu navegador.
+Motor C puro compilado a WebAssembly — sin servidor, sin backend. La primera carga descarga el modelo.</p>
+
+<div id="bar"><div></div></div>
+<div id="status">Pulsa «Cargar modelo».</div>
+
+<div class="row">
+  <button id="load">Cargar modelo</button>
+  <button id="go" disabled>Generar</button>
+  <label>maxTokens <input id="maxTokens" type="number" value="64"></label>
+  <label>temp <input id="temp" type="number" value="0.7" step="0.1" min="0" max="2"></label>
+  <label>topK <input id="topK" type="number" value="40"></label>
+</div>
+
+<textarea id="prompt" rows="3">The secret to happiness is</textarea>
+<div id="out"></div>
+
+<script type="module">
+  import { TinyLlama } from './tinyllama.js';
+
+  const $ = (id) => document.getElementById(id);
+  const bar = document.querySelector('#bar > div');
+  let llm = null;
+  let busy = false;
+
+  $('load').onclick = async () => {
+    $('load').disabled = true;
+    try {
+      llm = await TinyLlama.load({
+        onProgress: (f) => {
+          bar.style.width = (f * 100).toFixed(1) + '%';
+          $('status').textContent = `Descargando modelo… ${(f * 100).toFixed(0)}%`;
+        },
+      });
+      $('status').textContent = 'Modelo cargado. Escribe un prompt y pulsa Generar.';
+      $('go').disabled = false;
+    } catch (e) {
+      $('status').textContent = 'Error: ' + e.message;
+      $('load').disabled = false;
+    }
+  };
+
+  $('go').onclick = async () => {
+    if (!llm || busy) return;
+    busy = true;
+    $('go').disabled = true;
+    $('out').textContent = '';
+    const t0 = performance.now();
+    let n = 0;
+    try {
+      const opts = {
+        maxTokens: +$('maxTokens').value,
+        temp: +$('temp').value,
+        topK: +$('topK').value,
+      };
+      for await (const text of llm.generate($('prompt').value, opts)) {
+        $('out').textContent += text;
+        n++;
+        const dt = (performance.now() - t0) / 1000;
+        $('status').textContent = `${n} tokens — ${(n / dt).toFixed(2)} tok/s`;
+      }
+      $('status').textContent += ' — listo';
+    } catch (e) {
+      $('status').textContent = 'Error: ' + e.message;
+    }
+    busy = false;
+    $('go').disabled = false;
+  };
+</script>
+</body>
+</html>
