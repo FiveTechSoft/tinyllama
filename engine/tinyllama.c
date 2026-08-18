@@ -567,25 +567,119 @@ static inline float dot_f16(const float *a, const uint8_t *b, int n) {
     return sum;
 }
 
-/* out[j] = x . W_row(j); dispatch on the tensor's quantization type */
-static void matmul_t(float *out, const float *x, const Tensor *W, int in_dim, int out_dim) {
-    int64_t rb = tensor_row_bytes(W);
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-    for (int j = 0; j < out_dim; j++) {
-        const uint8_t *row = W->ptr + j * rb;
-        switch (W->type) {
-            case GGUF_F32:  out[j] = dot_f32(x, (const float *)row, in_dim); break;
-            case GGUF_F16:  out[j] = dot_f16(x, row, in_dim); break;
-            case GGUF_Q4_0: out[j] = dot_q4_0(x, row, in_dim); break;
-            default: fprintf(stderr, "matmul: unsupported type %d\n", W->type); exit(1);
-        }
+static inline float row_dot(const float *x, const uint8_t *row, int type, int in_dim) {
+    switch (type) {
+        case GGUF_F32:  return dot_f32(x, (const float *)row, in_dim);
+        case GGUF_F16:  return dot_f16(x, row, in_dim);
+        default:        return dot_q4_0(x, row, in_dim);
     }
 }
 
+/* ================================================================
+ *  THREAD POOL (WASM pthreads; en nativo se usa OpenMP)
+ *  Pool persistente: el hilo llamante tambien trabaja (fork-join).
+ * ================================================================ */
+#if defined(TL_WASM_THREADS)
+#include <pthread.h>
+#include <stdatomic.h>
+#include <emscripten/threading.h>
+
+typedef struct {
+    const float *x;
+    const uint8_t *W;
+    int type;
+    int in_dim, out_dim;
+    int64_t row_bytes;
+    float *out;
+    _Atomic int next;
+} MatmulJob;
+
+static MatmulJob g_job;
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_cv_start = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t g_cv_end = PTHREAD_COND_INITIALIZER;
+static int g_gen = 0;       /* generacion del trabajo actual */
+static int g_pending = 0;   /* workers que aun no han terminado */
+static int g_nworkers = 0;
+
+static void job_rows(void) {
+    for (;;) {
+        int j = atomic_fetch_add_explicit(&g_job.next, 1, memory_order_relaxed);
+        if (j >= g_job.out_dim) break;
+        g_job.out[j] = row_dot(g_job.x, g_job.W + (int64_t)j * g_job.row_bytes,
+                               g_job.type, g_job.in_dim);
+    }
+}
+
+static void *pool_worker(void *arg) {
+    (void)arg;
+    int seen = 0;
+    for (;;) {
+        pthread_mutex_lock(&g_mu);
+        while (g_gen == seen) pthread_cond_wait(&g_cv_start, &g_mu);
+        seen = g_gen;
+        pthread_mutex_unlock(&g_mu);
+        job_rows();
+        pthread_mutex_lock(&g_mu);
+        if (--g_pending == 0) pthread_cond_signal(&g_cv_end);
+        pthread_mutex_unlock(&g_mu);
+    }
+    return NULL;
+}
+
+static void pool_start(void) {
+    if (g_nworkers > 0) return;
+    int n = (int)emscripten_num_logical_cores() - 1; /* el llamante participa */
+    if (n > 15) n = 15;
+    for (int i = 0; i < n; i++) {
+        pthread_t t;
+        if (pthread_create(&t, NULL, pool_worker, NULL) != 0) break;
+        pthread_detach(t);
+        g_nworkers++;
+    }
+}
+
+static void matmul_parallel(const float *x, const uint8_t *W, int type,
+                            int in_dim, int out_dim, int64_t row_bytes, float *out) {
+    g_job.x = x; g_job.W = W; g_job.type = type;
+    g_job.in_dim = in_dim; g_job.out_dim = out_dim;
+    g_job.row_bytes = row_bytes; g_job.out = out;
+    atomic_store_explicit(&g_job.next, 0, memory_order_relaxed);
+    pthread_mutex_lock(&g_mu);
+    g_pending = g_nworkers;
+    g_gen++;
+    pthread_cond_broadcast(&g_cv_start);
+    pthread_mutex_unlock(&g_mu);
+    job_rows();
+    pthread_mutex_lock(&g_mu);
+    while (g_pending > 0) pthread_cond_wait(&g_cv_end, &g_mu);
+    pthread_mutex_unlock(&g_mu);
+}
+#endif /* TL_WASM_THREADS */
+
+/* out[j] = x . W_row(j); dispatch on the tensor's quantization type */
+static void matmul_t(float *out, const float *x, const Tensor *W, int in_dim, int out_dim) {
+    int64_t rb = tensor_row_bytes(W);
+#if defined(TL_WASM_THREADS)
+    if (g_nworkers > 0 && out_dim >= 128) {
+        matmul_parallel(x, W->ptr, W->type, in_dim, out_dim, rb, out);
+        return;
+    }
+#elif defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
+    for (int j = 0; j < out_dim; j++)
+        out[j] = row_dot(x, W->ptr + (int64_t)j * rb, W->type, in_dim);
+}
+
 static void matmul_f32(float *out, const float *x, const float *W, int in_dim, int out_dim) {
-#ifdef _OPENMP
+#if defined(TL_WASM_THREADS)
+    if (g_nworkers > 0) {
+        matmul_parallel(x, (const uint8_t *)W, GGUF_F32, in_dim, out_dim,
+                        (int64_t)in_dim * 4, out);
+        return;
+    }
+#elif defined(_OPENMP)
 #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < out_dim; j++)
@@ -778,6 +872,9 @@ static int sample(float *logits, int vocab, int top_k, float temp) {
 /* Load model from an in-memory GGUF buffer (we keep the pointer).
  * size is int (not int64) so JS can pass it without BigInt (< 2 GB). */
 TL_EXPORT int tl_init(uint8_t *buf, int size) {
+#if defined(TL_WASM_THREADS)
+    pool_start();
+#endif
     model_load(&g_model, buf, (int64_t)size);
     return 0;
 }

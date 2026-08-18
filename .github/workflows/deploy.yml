@@ -21,17 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compile engine to WebAssembly (pthreads + OpenMP + SIMD128)
+      - name: Compile engine to WebAssembly (pthreads + SIMD128)
         run: |
           mkdir -p site
-          emcc engine/tinyllama.c -O3 -msimd128 -fopenmp \
+          emcc engine/tinyllama.c -O3 -msimd128 -DTL_WASM_THREADS \
             -o site/tinyllama-engine.js \
             -s WASM=1 \
             -s USE_PTHREADS=1 \
             -s 'PTHREAD_POOL_SIZE=navigator.hardwareConcurrency||4' \
-            -s INITIAL_MEMORY=1342177280 \
-            -s ALLOW_MEMORY_GROWTH=1 \
-            -s MAXIMUM_MEMORY=2147483648 \
+            -s INITIAL_MEMORY=1610612736 \
             -s MODULARIZE=1 \
             -s EXPORT_ES6=1 \
             -s EXPORT_NAME=createTinyLlamaModule \
