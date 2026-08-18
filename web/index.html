@@ -3,95 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tinillama — TinyLlama-1.1B en tu navegador</title>
+<title>tinillama — chat con TinyLlama-1.1B en tu navegador</title>
 <style>
   :root { color-scheme: dark; }
-  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #e6edf3; }
-  h1 { font-size: 1.4rem; }
-  .sub { color: #8b949e; font-size: .9rem; margin-bottom: 1.5rem; }
-  #bar { width: 100%; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: .5rem 0 1rem; }
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 1.5rem auto; padding: 0 1rem; background: #0d1117; color: #e6edf3; display: flex; flex-direction: column; min-height: 95vh; }
+  h1 { font-size: 1.3rem; margin-bottom: .2rem; }
+  .sub { color: #8b949e; font-size: .85rem; margin-bottom: 1rem; }
+  #bar { width: 100%; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: .5rem 0; }
   #bar > div { height: 100%; width: 0%; background: #2f81f7; transition: width .2s; }
-  #status { font-size: .85rem; color: #8b949e; min-height: 1.2em; }
-  textarea { width: 100%; box-sizing: border-box; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .6rem; font: inherit; }
-  .row { display: flex; gap: .5rem; align-items: center; margin: .6rem 0; flex-wrap: wrap; }
-  label { font-size: .8rem; color: #8b949e; }
-  input[type=number] { width: 4.5rem; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .3rem; }
-  button { background: #238636; color: #fff; border: 0; border-radius: 6px; padding: .55rem 1.1rem; font: inherit; cursor: pointer; }
+  #status { font-size: .8rem; color: #8b949e; min-height: 1.1em; margin-bottom: .5rem; }
+  #chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0; }
+  .msg { padding: .6rem .8rem; border-radius: 10px; white-space: pre-wrap; line-height: 1.45; max-width: 92%; }
+  .user { align-self: flex-end; background: #1f6feb; }
+  .bot { align-self: flex-start; background: #161b22; border: 1px solid #30363d; }
+  .bot .meta { display: block; margin-top: .4rem; font-size: .72rem; color: #8b949e; }
+  #composer { display: flex; gap: .5rem; margin-top: .8rem; }
+  #input { flex: 1; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; padding: .6rem; font: inherit; resize: none; }
+  button { background: #238636; color: #fff; border: 0; border-radius: 8px; padding: .55rem 1rem; font: inherit; cursor: pointer; }
   button:disabled { background: #21262d; color: #8b949e; cursor: default; }
-  #out { white-space: pre-wrap; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: .8rem; min-height: 6rem; margin-top: .8rem; }
-  code { background: #161b22; padding: .1rem .35rem; border-radius: 4px; }
+  #new { background: #21262d; }
+  .opts { display: flex; gap: .8rem; align-items: center; font-size: .78rem; color: #8b949e; flex-wrap: wrap; }
+  .opts input { width: 3.6rem; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .25rem; }
 </style>
 </head>
 <body>
-<h1>tinillama</h1>
-<p class="sub">TinyLlama-1.1B (Q4_0, 608 MB) ejecutándose íntegramente en tu navegador.
-Motor C puro compilado a WebAssembly — sin servidor, sin backend. La primera carga descarga el modelo.</p>
+<h1>tinillama chat</h1>
+<p class="sub">TinyLlama-1.1B-Chat (Q4_0, 608 MB) corriendo <b>en tu navegador</b> — motor C puro → WASM, sin servidor. La primera carga descarga el modelo.</p>
 
 <div id="bar"><div></div></div>
-<div id="status">Pulsa «Cargar modelo».</div>
+<div id="status">Cargando modelo…</div>
 
-<div class="row">
-  <button id="load">Cargar modelo</button>
-  <button id="go" disabled>Generar</button>
-  <label>maxTokens <input id="maxTokens" type="number" value="64"></label>
+<div id="chat"></div>
+
+<div class="opts">
+  <label>maxTokens <input id="maxTokens" type="number" value="200"></label>
   <label>temp <input id="temp" type="number" value="0.7" step="0.1" min="0" max="2"></label>
   <label>topK <input id="topK" type="number" value="40"></label>
+  <button id="new">Nueva conversación</button>
 </div>
-
-<textarea id="prompt" rows="3">The secret to happiness is</textarea>
-<div id="out"></div>
+<div id="composer">
+  <textarea id="input" rows="2" placeholder="Escribe tu mensaje… (Enter para enviar)" disabled></textarea>
+  <button id="send" disabled>Enviar</button>
+</div>
 
 <script type="module">
   import { TinyLlama } from './tinyllama.js';
 
   const $ = (id) => document.getElementById(id);
   const bar = document.querySelector('#bar > div');
-  let llm = null;
-  let busy = false;
+  let llm = null, busy = false;
+  const history = []; // [{u, a}]
 
-  $('load').onclick = async () => {
-    $('load').disabled = true;
+  const addMsg = (cls, text) => {
+    const d = document.createElement('div');
+    d.className = 'msg ' + cls;
+    d.textContent = text;
+    $('chat').appendChild(d);
+    d.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    return d;
+  };
+
+  // Formato Zephyr (TinyLlama-Chat) como texto literal: este GGUF no trae
+  // los tokens especiales, pero el modelo responde bien al formato.
+  const buildPrompt = (msg) => {
+    let p = '';
+    for (const t of history) p += `<|user|>\n${t.u}</s>\n<|assistant|>\n${t.a}</s>\n`;
+    return p + `<|user|>\n${msg}</s>\n<|assistant|>\n`;
+  };
+
+  const send = async () => {
+    const msg = $('input').value.trim();
+    if (!msg || !llm || busy) return;
+    busy = true;
+    $('send').disabled = true;
+    $('input').value = '';
+    addMsg('user', msg);
+    const bubble = addMsg('bot', '…');
+    const t0 = performance.now();
+    let n = 0, text = '';
+    try {
+      $('status').textContent = 'Procesando prompt (prefill)…';
+      const gen = llm.generate(buildPrompt(msg), {
+        maxTokens: +$('maxTokens').value,
+        temp: +$('temp').value,
+        topK: +$('topK').value,
+      });
+      for await (const chunk of gen) {
+        text += chunk;
+        if (text.includes('</s>')) { text = text.split('</s>')[0]; break; }
+        n++;
+        bubble.textContent = text;
+        const dt = (performance.now() - t0) / 1000;
+        $('status').textContent = `${n} tokens — ${(n / dt).toFixed(2)} tok/s`;
+      }
+      bubble.textContent = text || '(sin respuesta)';
+      const dt = (performance.now() - t0) / 1000;
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = `${n} tokens · ${(n / dt).toFixed(2)} tok/s · ${dt.toFixed(0)}s`;
+      bubble.appendChild(meta);
+      history.push({ u: msg, a: text });
+      $('status').textContent = 'Listo.';
+    } catch (e) {
+      bubble.textContent = 'Error: ' + e.message;
+    }
+    busy = false;
+    $('send').disabled = false;
+    $('input').focus();
+  };
+
+  $('send').onclick = send;
+  $('input').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+  $('new').onclick = () => { history.length = 0; $('chat').innerHTML = ''; };
+
+  // carga automática del modelo al abrir la página
+  (async () => {
     try {
       llm = await TinyLlama.load({
         onProgress: (f) => {
           bar.style.width = (f * 100).toFixed(1) + '%';
-          $('status').textContent = `Descargando modelo… ${(f * 100).toFixed(0)}%`;
+          $('status').textContent = `Descargando modelo… ${(f * 100).toFixed(0)}% (se cachea para próximas visitas)`;
         },
       });
-      $('status').textContent = 'Modelo cargado. Escribe un prompt y pulsa Generar.';
-      $('go').disabled = false;
+      $('status').textContent = 'Modelo cargado. ¡Chatea!';
+      $('input').disabled = false;
+      $('send').disabled = false;
+      $('input').focus();
     } catch (e) {
-      $('status').textContent = 'Error: ' + e.message;
-      $('load').disabled = false;
+      $('status').textContent = 'Error cargando el modelo: ' + e.message;
     }
-  };
-
-  $('go').onclick = async () => {
-    if (!llm || busy) return;
-    busy = true;
-    $('go').disabled = true;
-    $('out').textContent = '';
-    const t0 = performance.now();
-    let n = 0;
-    try {
-      const opts = {
-        maxTokens: +$('maxTokens').value,
-        temp: +$('temp').value,
-        topK: +$('topK').value,
-      };
-      for await (const text of llm.generate($('prompt').value, opts)) {
-        $('out').textContent += text;
-        n++;
-        const dt = (performance.now() - t0) / 1000;
-        $('status').textContent = `${n} tokens — ${(n / dt).toFixed(2)} tok/s`;
-      }
-      $('status').textContent += ' — listo';
-    } catch (e) {
-      $('status').textContent = 'Error: ' + e.message;
-    }
-    busy = false;
-    $('go').disabled = false;
-  };
+  })();
 </script>
 </body>
 </html>
