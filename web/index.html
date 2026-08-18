@@ -90,6 +90,8 @@
     if (!msg || !llm || busy) return;
     busy = true;
     $('send').disabled = true;
+    $('send').textContent = 'Generando…';
+    $('input').disabled = true;
     $('input').value = '';
     addMsg('user', msg);
     const bubble = addMsg('bot', '…');
@@ -127,6 +129,8 @@
     }
     busy = false;
     $('send').disabled = false;
+    $('send').textContent = 'Enviar';
+    $('input').disabled = false;
     $('input').focus();
   };
 
