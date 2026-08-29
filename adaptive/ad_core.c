@@ -1,4 +1,4 @@
-﻿/*
+/*
  * ad_core.c - nucleo del modelo adaptativo
  * Kernels (matmul, layernorm, softmax, gelu + backward), layout de tensores,
  * alloc/free, carga y guardado del formato ADM.
@@ -12,6 +12,50 @@
 /* ================= kernels ================= */
 
 /* out[r] = W[r,:] . x   (W [R x C] row-major) */
+/* ---- kernels SIMD (de FiveTechSoft/dreaming, llm_inference.c) ---- */
+#if defined(__AVX2__)
+#include <immintrin.h>
+#elif defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+
+static inline float ad_dot(const float *a, const float *b, int n) {
+#if defined(__AVX2__)
+    int i = 0;
+    __m256 sum = _mm256_setzero_ps();
+    for (; i + 8 <= n; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+        sum = _mm256_add_ps(sum, _mm256_mul_ps(va, vb));
+    }
+    __m128 hi = _mm256_extractf128_ps(sum, 1);
+    __m128 lo = _mm256_castps256_ps128(sum);
+    __m128 s4 = _mm_add_ps(lo, hi);
+    __m128 s2 = _mm_add_ps(s4, _mm_movehl_ps(s4, s4));
+    __m128 s1 = _mm_add_ss(s2, _mm_shuffle_ps(s2, s2, 1));
+    float r = _mm_cvtss_f32(s1);
+    for (; i < n; i++) r += a[i] * b[i];
+    return r;
+#elif defined(__SSE2__)
+    int i = 0;
+    __m128 sum = _mm_setzero_ps();
+    for (; i + 4 <= n; i += 4) {
+        __m128 va = _mm128_loadu_ps(a + i);
+        __m128 vb = _mm128_loadu_ps(b + i);
+        sum = _mm_add_ps(sum, _mm_mul_ps(va, vb));
+    }
+    float tmp[4];
+    _mm_storeu_ps(tmp, sum);
+    float r = tmp[0]+tmp[1]+tmp[2]+tmp[3];
+    for (; i < n; i++) r += a[i] * b[i];
+    return r;
+#else
+    float r = 0.f;
+    for (int i = 0; i < n; i++) r += a[i] * b[i];
+    return r;
+#endif
+}
+
 void ad_matmul(float *out, const float *W, const float *x, int R, int C) {
     for (int r = 0; r < R; r++) {
         const float *wr = W + (size_t)r * C;
