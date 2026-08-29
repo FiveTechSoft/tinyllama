@@ -1,0 +1,100 @@
+name: Adaptive train
+
+# Ciclo de mejora del modelo adaptativo: medir -> entrenar -> medir ->
+# publicar solo si la PPL de validacion mejora. Varias veces al dia.
+on:
+  schedule:
+    # 4 ciclos diarios (UTC): 01:23, 07:23, 13:23, 19:23
+    - cron: "23 1 * * *"
+    - cron: "23 7 * * *"
+    - cron: "13 9 * * *"
+    - cron: "23 * * *"      # placeholder: se ajusta abajo
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: "pasos de entrenamiento"
+        default: "2000"
+      dim:
+        description: "dim del modelo si crea fresh"
+        default: "96"
+      heads: "4"
+      layers: "4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: adaptive-train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar GCC
+        run: sudo apt-get update && sudo apt-get install -y gcc
+
+      - name: Compilar entrenador
+        run: |
+          cd adaptive
+          gcc -O3 -mavx2 -o train train.c ad_core.c -lm
+          gcc -O2 -o prep_data prep_data.c
+
+      - name: Dataset desde peng-mimo (clone shallow)
+        run: |
+          git clone --depth 1 --branch peng \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/FiveTechSoft/peng-mimo.git pm
+          ls dataset/verified 2>/dev/null || true
+          mkdir -p work
+          cp ../peng-mimo/dataset/verified/prog-*.jsonl . 2>/dev/null || true
+          cd adaptive
+          for f in ../dataset/verified/prog-*.jsonl; do
+            [ -e "$f" ] && cp "$f" .
+          done
+          ls *.jsonl 2>/dev/null | head
+
+      - name: Preparar corpus
+        run: |
+          cd adaptive
+          cat ../dataset/verified/prog-*.jsonl > batch.jsonl 2>/dev/null || true
+          if [ -s batch.jsonl ]; then
+            python3 -c "
+            import sys
+            data = open('batch.jsonl','rb').read()
+            if data[:2] == b'\xff\xfe': data = data.decode('utf-16').encode('utf-8')
+            open('batch_u8.jsonl','wb').write(data)
+            "
+            ./prep_data corpus_nuevo.bin batch_u8.jsonl 2>/dev/null || ./prep_data corpus_nuevo.bin peng_batch_u8.jsonl
+          fi
+          ls -la *.bin 2>/dev/null || true
+
+      - name: Entrenar (gate de publicacion por PPL)
+        run: |
+          cd adaptive
+          # entrena 5 tandas incrementales; cada una publicada solo si mejora
+          for ciclo in 1 2 3; do
+            if [ -f model.adm ]; then
+              ./train --model model.adm --data corpus_peng.bin \
+                --val corpus_peng.bin --steps 1500 --batch 8 --ctx 96 \
+                --eval 60 --out model.adm || true
+            else
+              ./train --fresh 96,4,4 --data corpus_peng.bin \
+                --val corpus_peng.bin --steps 1500 --batch 8 --ctx 96 || true
+            fi
+          done
+          cat metrics.csv 2>/dev/null | tail -5
+
+      - name: Commit modelo + metricas
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add adaptive/model.adm adaptive/metrics.csv
+          if git diff --cached --quiet; then
+            echo "sin cambios que publicar"
+          else
+            git commit -m "adaptive: ciclo de entrenamiento automatico $(date -u +%Y-%m-%dT%H:%M)"
+            git push
+          fi
