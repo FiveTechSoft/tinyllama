@@ -7,8 +7,8 @@ on:
     # 4 ciclos diarios (UTC): 01:23, 07:23, 13:23, 19:23
     - cron: "23 1 * * *"
     - cron: "23 7 * * *"
-    - cron: "13 9 * * *"
-    - cron: "23 * * *"      # placeholder: se ajusta abajo
+    - cron: "23 13 * * *"
+    - cron: "23 19 * * *"
   workflow_dispatch:
     inputs:
       steps:
@@ -17,8 +17,12 @@ on:
       dim:
         description: "dim del modelo si crea fresh"
         default: "96"
-      heads: "4"
-      layers: "4"
+      heads:
+        description: "cabezas de atencion"
+        default: "4"
+      layers:
+        description: "bloques del transformer"
+        default: "4"
 
 permissions:
   contents: write
