@@ -1,0 +1,4 @@
+[cargando model.adm]
+[load=0] dim=96 L=4 seq=128
+[prompt 'hola ']
+[prefill OK n_prompt=7]

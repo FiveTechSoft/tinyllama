@@ -1,0 +1,5 @@
+chat adaptativo v0.1 | dim=96 L=4 | /limpiar /salir
+> vida 
+> collaz
+> [reset] > hxomzidias
+> 

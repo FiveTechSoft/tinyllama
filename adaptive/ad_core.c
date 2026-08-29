@@ -40,8 +40,8 @@ static inline float ad_dot(const float *a, const float *b, int n) {
     int i = 0;
     __m128 sum = _mm_setzero_ps();
     for (; i + 4 <= n; i += 4) {
-        __m128 va = _mm128_loadu_ps(a + i);
-        __m128 vb = _mm128_loadu_ps(b + i);
+        __m128 va = _mm_loadu_ps(a + i);
+        __m128 vb = _mm_loadu_ps(b + i);
         sum = _mm_add_ps(sum, _mm_mul_ps(va, vb));
     }
     float tmp[4];
@@ -273,7 +273,7 @@ static int infer_alloc(AdModel *m) {
     s_h   = (float *)malloc(d * sizeof(float));
     s_qkv = (float *)malloc(3 * d * sizeof(float));
     s_xb  = (float *)malloc(d * sizeof(float));
-    s_f1  = (float *)malloc((ms > d ? ms : d) * sizeof(float));
+    s_f1  = (float *)malloc((size_t)m->cfg.hidden * sizeof(float));
     s_kc  = (float *)calloc(L * ms * d, sizeof(float));
     s_vc  = (float *)calloc(L * ms * d, sizeof(float));
     if (!s_x || !s_h || !s_qkv || !s_xb || !s_f1 || !s_kc || !s_vc) return -1;

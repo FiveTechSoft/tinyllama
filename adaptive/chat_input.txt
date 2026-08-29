@@ -1,0 +1,5 @@
+hola que tal
+como estas
+/limpiar
+cuentame algo
+/salir
