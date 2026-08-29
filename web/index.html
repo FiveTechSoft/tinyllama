@@ -27,14 +27,30 @@
   #new { background: #21262d; }
   .opts { display: flex; gap: .8rem; align-items: center; font-size: .78rem; color: #8b949e; flex-wrap: wrap; }
   .opts input { width: 3.6rem; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: .25rem; }
+  #modelPicker { display: flex; gap: 1.2rem; align-items: center; font-size: .82rem; margin-bottom: .6rem; }
+  #modelPicker label { display: flex; gap: .4rem; align-items: center; cursor: pointer; }
+  #loadBtn { background: #8957e5; }
+  #metrics { border: 1px solid #30363d; border-radius: 8px; padding: .5rem .8rem; margin-bottom: .6rem; background: #0a0d13; }
+  #metricsLine { margin: 0; }
+  #metricsLine b { color: #3fb950; }
 </style>
 </head>
 <body>
 <h1>tinillama chat</h1>
-<p class="sub">TinyLlama-1.1B-Chat (Q4_0, 608 MB) corriendo <b>en tu navegador</b> — motor C puro → WASM, sin servidor. La primera carga descarga el modelo.</p>
+<p class="sub">Dos motores C → WASM corriendo <b>en tu navegador</b>, sin servidor.</p>
+
+<div id="modelPicker">
+  <label><input type="radio" name="m" value="big" checked> TinyLlama-1.1B (608 MB, 1º load lento)</label>
+  <label><input type="radio" name="m" value="adaptive"> Adaptativo (1-2 MB, instantáneo, se entrena solo 4×/día)</label>
+  <button id="loadBtn">Cargar modelo</button>
+</div>
+
+<div id="metrics" style="display:none">
+  <div id="metricsLine" class="sub"></div>
+</div>
 
 <div id="bar"><div></div></div>
-<div id="status">Cargando modelo…</div>
+<div id="status">Elige un modelo y pulsa Cargar…</div>
 
 <div id="chat"></div>
 
@@ -62,6 +78,7 @@
 </script>
 <script type="module">
   import { TinyLlama } from './tinyllama.js';
+  import { Adaptive } from './adaptive.js';
 
   const $ = (id) => document.getElementById(id);
   const bar = document.querySelector('#bar > div');
@@ -76,6 +93,42 @@
     d.scrollIntoView({ behavior: 'smooth', block: 'end' });
     return d;
   };
+
+  /* ---------- carga con selector de modelo ---------- */
+  async function loadSelected() {
+    const which = document.querySelector('input[name=m]:checked').value;
+    llm = null;
+    bar.style.width = '0%';
+    try {
+      if (which === 'adaptive') {
+        llm = await Adaptive.load({
+          onProgress: (f) => { bar.style.width = '100%'; },
+          onMetadata: (md) => {
+            $('metrics').style.display = 'block';
+            $('metricsLine').innerHTML =
+              `<b>${md.mp}M pesos</b> · dim=${md.dim} · L=${md.layers} · H=${md.heads} · hid=${md.hidden}` +
+              ` · ctx=${md.seq} · <b>${md.steps} pasos de entrenamiento</b> · ${md.sizeMB} MB` +
+              (md.lastPpl ? ` · PPL ${md.lastPplBefore}→${md.lastPplAfter}` : '');
+          },
+        });
+      } else {
+        $('metrics').style.display = 'none';
+        llm = await TinyLlama.load({
+          onProgress: (f) => {
+            bar.style.width = (f * 100).toFixed(1) + '%';
+            $('status').textContent = `Descargando… ${(f * 100).toFixed(0)}%`;
+          },
+        });
+      }
+      $('status').textContent = 'Modelo cargado. ¡Chatea!';
+      $('input').disabled = false;
+      $('send').disabled = false;
+      $('input').focus();
+    } catch (e) {
+      $('status').textContent = 'Error: ' + e.message;
+    }
+  }
+  $('loadBtn').onclick = loadSelected;
 
   // Formato Zephyr (TinyLlama-Chat) como texto literal: este GGUF no trae
   // los tokens especiales, pero el modelo responde bien al formato.
@@ -138,27 +191,14 @@
   $('input').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   $('new').onclick = () => { history.length = 0; $('chat').innerHTML = ''; };
 
-  // carga automática del modelo al abrir la página
+  // carga automática del modelo por defecto (el adaptativo: rapidisimo)
   (async () => {
-    try {
-      llm = await TinyLlama.load({
-        onProgress: (f) => {
-          bar.style.width = (f * 100).toFixed(1) + '%';
-          $('status').textContent = `Descargando modelo… ${(f * 100).toFixed(0)}% (se cachea para próximas visitas)`;
-        },
-      });
-      $('status').textContent = `Modelo cargado (hilos: ${crossOriginIsolated ? navigator.hardwareConcurrency + ' pthreads' : '1 — sin SharedArrayBuffer'}). ¡Chatea!`;
-      $('input').disabled = false;
-      $('send').disabled = false;
-      $('input').focus();
-      // #selftest: envia un mensaje corto automaticamente (diagnostico)
-      if (location.hash === '#selftest') {
-        $('maxTokens').value = 12;
-        $('input').value = 'What is happiness?';
-        send();
-      }
-    } catch (e) {
-      $('status').textContent = 'Error cargando el modelo: ' + e.message;
+    await loadSelected();
+    // #selftest: envia un mensaje corto automaticamente (diagnostico)
+    if (location.hash === '#selftest') {
+      $('maxTokens').value = 12;
+      $('input').value = 'What is happiness?';
+      send();
     }
   })();
 </script>

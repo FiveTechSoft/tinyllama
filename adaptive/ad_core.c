@@ -414,3 +414,92 @@ int ad_step(AdModel *m, float temp, int top_k) {
     ad_forward(m);
     return next;
 }
+
+/* ================= API WASM (modelo en memoria) =================
+ * JS descarga model.adm y pasa el buffer directamente. */
+/* ================= API WASM (modelo en memoria) =================
+ * JS descarga model.adm y pasa el buffer directamente. */
+
+int ad_load_from(AdModel *m, const uint8_t *buf, int size) {
+    if (!buf || size < AD_HDR || memcmp(buf, "ADMF", 4) != 0) return -1;
+    const uint32_t *v = (const uint32_t *)buf;
+    if (v[1] != AD_VERSION) return -2;
+    ad_model_free(m);
+    memset(m, 0, sizeof(*m));
+    m->cfg.dim = (int)v[2];
+    m->cfg.n_layers = (int)v[3];
+    m->cfg.n_heads = (int)v[4];
+    m->cfg.hidden = (int)v[5];
+    m->cfg.max_seq = (int)v[6];
+    m->cfg.train_steps = v[7];
+    m->cfg.flags = v[8];
+    if (m->cfg.dim <= 0 || m->cfg.n_heads <= 0 || m->cfg.dim % m->cfg.n_heads)
+        return -3;
+    if (m->cfg.n_layers < 1 || m->cfg.n_layers > AD_MAX_LAYERS) return -4;
+    if (m->cfg.max_seq < 2 || m->cfg.max_seq > AD_MAX_SEQ) return -5;
+    m->cfg.head_dim = m->cfg.dim / m->cfg.n_heads;
+    if (ad_model_alloc(m) != 0) return -6;
+    if ((size_t)size < AD_HDR + m->lay.total * sizeof(float)) return -7;
+    memcpy(m->w, buf + AD_HDR, m->lay.total * sizeof(float));
+    return 0;
+}
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+static AdModel g_m;
+
+EMSCRIPTEN_KEEPALIVE
+int ad_load_mem(const uint8_t *buf, int size) {
+    return ad_load_from(&g_m, buf, size);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int ad_set_prompt_mem(const char *text) {
+    return ad_set_prompt(&g_m, text);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int ad_step_mem(float temp, int top_k) {
+    return ad_step(&g_m, temp, top_k);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int ad_n_prompt(void) { return g_m.n_prompt; }
+
+EMSCRIPTEN_KEEPALIVE
+int ad_n_tok(void) { return g_m.n_tok; }
+
+EMSCRIPTEN_KEEPALIVE
+int ad_dim(void) { return g_m.cfg.dim; }
+
+EMSCRIPTEN_KEEPALIVE
+static const char *ad_token_str_impl(AdModel *m, int id) {
+    static char b[2];
+    (void)m;
+    b[0] = (char)(id & 0xFF);
+    b[1] = 0;
+    return b;
+}
+
+const char *ad_tok_str(int id) { return ad_token_str_impl(&g_m, id); }
+
+/* ---- metricas de la version cargada ----
+ * total_params   = lay.total (floats)
+ * train_steps    = pasos de Adam del checkpoint
+ * n_layers/heads/hidden/max_seq = config
+ */
+EMSCRIPTEN_KEEPALIVE
+int ad_stats(int *out, int max_out) {
+    if (!out || max_out < 8) return -1;
+    out[0] = (int)g_m.lay.total;          /* pesos totales */
+    out[1] = (int)g_m.cfg.dim;
+    out[2] = (int)g_m.cfg.n_layers;
+    out[3] = (int)g_m.cfg.n_heads;
+    out[4] = (int)g_m.cfg.hidden;
+    out[5] = (int)g_m.cfg.max_seq;
+    out[6] = (int)g_m.cfg.train_steps;    /* pasos de entrenamiento */
+    out[7] = 1;                            /* version de formato */
+    return 8;
+}
+#endif

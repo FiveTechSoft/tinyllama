@@ -59,11 +59,14 @@ void ad_model_free(AdModel *m);
 int  ad_init_fresh(AdModel *m, int dim, int n_layers, int n_heads, int seq);
 int  ad_load(AdModel *m, const char *path);
 int  ad_save(AdModel *m, const char *path);
+int  ad_load_from(AdModel *m, const uint8_t *buf, int size);
 
 /* inferencia */
 void ad_forward(AdModel *m);                        /* 1 posicion + KV cache */
 int  ad_set_prompt(AdModel *m, const char *text);   /* tokeniza + prefill */
 int  ad_step(AdModel *m, float temp, int top_k);    /* -1 fin | byte 0..255 */
+int  ad_generated_n(AdModel *m);                    /* tokens generados */
+int  ad_byte(AdModel *m, int idx);                  /* token idx del stream */
 
 /* kernels */
 void  ad_matmul(float *out, const float *W, const float *x, int R, int C);
