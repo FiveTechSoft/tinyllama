@@ -45,8 +45,8 @@
 <p class="sub">Dos motores C → WASM corriendo <b>en tu navegador</b>, sin servidor.</p>
 
 <div id="modelPicker">
-  <label><input type="radio" name="m" value="big" checked> TinyLlama-1.1B (608 MB, 1º load lento)</label>
-  <label><input type="radio" name="m" value="adaptive"> Adaptativo (1-2 MB, instantáneo, se entrena solo 4×/día)</label>
+  <label><input type="radio" name="m" value="adaptive" checked> Adaptativo (2 MB, instantáneo, se entrena solo 4×/día)</label>
+  <label><input type="radio" name="m" value="big"> TinyLlama-1.1B (608 MB, 1º load lento)</label>
   <button id="loadBtn">Cargar modelo</button>
 </div>
 
@@ -123,6 +123,7 @@
                 const rows = await fetchHistory();
                 if (rows.length) {
                   $('history').innerHTML = renderHistory(rows);
+                  $('history').style.display = 'block';
                   $('histToggle').style.display = 'inline-block';
                 }
               } catch (e) { console.warn('historico no disponible:', e.message); }
