@@ -1,9 +1,7 @@
 /*
- * adaptive-worker.js - Web Worker del modelo adaptativo (.adm, ~1-2MB)
- * Carga instantanea + metricas de mejora del modelo en cada sesion.
- *
- * Mensajes: {cmd:'load', url} {cmd:'gen', id, prompt, maxTokens, temp, topK}
- * Sale:     {type:'progress'|'ready'|'metadata'|'token'|'done'|'error'}
+ * adaptive-worker.js - Web Worker del modelo adaptativo (.adm, ~2MB)
+ * FAST PATH: generation batch en UNA llamada WASM (gigakernel) y
+ * streaming de bloques a la UI (~8 tokens por frame) en vez de 1 a 1.
  */
 import createAdaptive from './adaptive-engine.js';
 
@@ -20,15 +18,13 @@ async function loadModel(url, post) {
   const r = M._ad_load_mem(ptr, bytes.length);
   M._free(ptr);
   if (r !== 0) throw new Error(`ad_load_mem = ${r}`);
-  /* metricas: [params, dim, layers, heads, hidden, seq, steps, fmtver] */
   const st = M._malloc(8 * 4);
   M._ad_stats(st, 8);
   const s = new Int32Array(M.HEAPF32.buffer, st, 8);
   post({
     type: 'metadata',
-    params: s[0],
-    dim: s[1], layers: s[2], heads: s[3], hidden: s[4], seq: s[5],
-    steps: s[6],
+    params: s[0], dim: s[1], layers: s[2], heads: s[3],
+    hidden: s[4], seq: s[5], steps: s[6],
     sizeMB: (bytes.length / 1048576).toFixed(2),
     mp: (s[0] / 1e6).toFixed(2),
   });
@@ -43,16 +39,25 @@ self.onmessage = async (e) => {
       await loadModel(m.url ?? 'adaptive/model.adm', post);
       post({ type: 'ready' });
     } else if (m.cmd === 'gen') {
-      M._ad_set_prompt_mem(m.prompt);
-      post({ type: 'prefillDone', id: m.id });
-      for (let i = 0; i < m.maxTokens; i++) {
-        const id = M._ad_step_mem(m.temp, m.topK);
-        if (id < 0) break;
-        const t = M._ad_tok_str(id);
-        post({ type: 'token', id: m.id, text: M.UTF8ToString(t) });
+      const maxT = Math.min(m.maxTokens || 200, 400);
+      const bufPtr = M._malloc(maxT);
+      const t0 = performance.now();
+      const n = M.ccall(
+        'ad_generate_n', 'number',
+        ['string', 'number', 'number', 'number', 'number'],
+        [m.prompt, maxT, m.temp, m.topK, bufPtr],
+      );
+      /* streaming por bloques: la UI ve texto fluido sin dispatch por token */
+      const chunkSize = 4;
+      for (let i = 0; i < n; i += chunkSize) {
+        const end = Math.min(i + chunkSize, n);
+        let s = '';
+        for (let k = i; k < end; k++) s += String.fromCharCode(M.HEAPU8[bufPtr + k]);
+        post({ type: 'token', id: m.id, text: s });
         await new Promise((r) => setTimeout(r, 0));
       }
-      post({ type: 'done', id: m.id });
+      M._free(bufPtr);
+      post({ type: 'done', id: m.id, tokens: n });
     }
   } catch (err) {
     post({ type: 'error', id: m.id, message: String((err && err.message) || err) });

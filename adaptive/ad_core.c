@@ -502,4 +502,21 @@ int ad_stats(int *out, int max_out) {
     out[7] = 1;                            /* version de formato */
     return 8;
 }
+
+/* ---- gigakernel: genera N tokens en UNA llamada (sin dispatch JS/token) ----
+ * out: buffer de N bytes JS->C; devuelve n de tokens escritos.
+ * strings de control (USER/BOT/EOS) cortan la generacion. */
+EMSCRIPTEN_KEEPALIVE
+int ad_generate_n(const char *prompt, int max_tokens, float temp, int top_k,
+                  uint8_t *out) {
+    if (ad_set_prompt(&g_m, prompt) < 0) return -1;
+    int n = 0;
+    for (int i = 0; i < max_tokens; i++) {
+        int id = ad_step(&g_m, temp, top_k);
+        if (id < 0) break;
+        if (out) out[n] = (uint8_t)id;
+        n++;
+    }
+    return n;
+}
 #endif
