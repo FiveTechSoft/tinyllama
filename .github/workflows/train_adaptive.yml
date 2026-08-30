@@ -70,6 +70,7 @@ jobs:
             ./prep_data corpus_hoy.bin batch_u8.jsonl
           fi
           # FineTome-100k completo: descarga y convierte (cacheado, no commiteado)
+          python3 -m pip install -q pyarrow || pip install -q pyarrow || true
           python3 ../../scripts/finetome_prep.py 2>/dev/null || python3 ../scripts/finetome_prep.py
           # mezcla: hoy + historico peng-mimo + FineTome rotante
           cat corpus_peng.bin corpus_ft_small.bin > corpus_total.bin
