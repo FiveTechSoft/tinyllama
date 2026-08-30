@@ -33,6 +33,11 @@
   #metrics { border: 1px solid #30363d; border-radius: 8px; padding: .5rem .8rem; margin-bottom: .6rem; background: #0a0d13; }
   #metricsLine { margin: 0; }
   #metricsLine b { color: #3fb950; }
+  #history { border: 1px solid #30363d; border-radius: 8px; padding: .5rem .8rem; margin-bottom: .6rem; background: #0a0d13; display: none; }
+  #histTable { width: 100%; font-size: .74rem; border-collapse: collapse; margin-top: .4rem; }
+  #histTable th { text-align: left; color: #8b949e; font-weight: 500; border-bottom: 1px solid #30363d; padding: .2rem .4rem; }
+  #histTable td { padding: .2rem .4rem; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; }
+  #histToggle { background: #21262d; font-size: .75rem; padding: .3rem .7rem; margin-bottom: .6rem; }
 </style>
 </head>
 <body>
@@ -48,6 +53,9 @@
 <div id="metrics" style="display:none">
   <div id="metricsLine" class="sub"></div>
 </div>
+
+<button id="histToggle" style="display:none" onclick="document.getElementById('history').style.display = document.getElementById('history').style.display==='none' ? 'block' : 'none'">📈 Evolución del modelo</button>
+<div id="history"></div>
 
 <div id="bar"><div></div></div>
 <div id="status">Elige un modelo y pulsa Cargar…</div>
@@ -109,6 +117,16 @@
               `<b>${md.mp}M pesos</b> · dim=${md.dim} · L=${md.layers} · H=${md.heads} · hid=${md.hidden}` +
               ` · ctx=${md.seq} · <b>${md.steps} pasos de entrenamiento</b> · ${md.sizeMB} MB` +
               (md.lastPpl ? ` · PPL ${md.lastPplBefore}→${md.lastPplAfter}` : '');
+            /* historico de evolucion: metrics.csv publicado por el trainer */
+            import('./history.js').then(async ({ fetchHistory, renderHistory }) => {
+              try {
+                const rows = await fetchHistory();
+                if (rows.length) {
+                  $('history').innerHTML = renderHistory(rows);
+                  $('histToggle').style.display = 'inline-block';
+                }
+              } catch (e) { console.warn('historico no disponible:', e.message); }
+            });
           },
         });
       } else {
@@ -204,3 +222,4 @@
 </script>
 </body>
 </html>
+
