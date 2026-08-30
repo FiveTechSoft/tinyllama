@@ -46,8 +46,15 @@ static uint8_t *read_file(const char *path, size_t *len) {
     return u;
 }
 
+/* contexto global del entrenamiento (main usa esto; WASM lo setea directo) */
 static AdModel M;               /* modelo en entrenamiento */
 static float  *GRAD, *ADM, *ADV;/* gradientes + moments Adam */
+static uint8_t *g_train = NULL, *g_val = NULL;
+static size_t   g_train_len = 0, g_val_len = 0;
+static int      g_adam_t = 0;
+static size_t   g_nfloats = 0;
+
+static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd);
 
 /* gradiente de pesos de un linear: dW[r,c] += dy[r] * x[c] */
 static void gWadd(float *dW, const float *dy, const float *x, int R, int C) {
@@ -105,6 +112,58 @@ static int bufs_alloc(void) {
     return 0;
 }
 
+/* ---- setup: buffers + gradientes + Adam (tras cargar M) ---- */
+static int train_setup(void) {
+    bT = OPT_T; bD = M.cfg.dim; bH = M.cfg.hidden;
+    bHD = M.cfg.head_dim; bNH = M.cfg.n_heads; bL = M.cfg.n_layers;
+    if (bufs_alloc()) return -1;
+    g_nfloats = ad_total_floats(&M.cfg);
+    GRAD = (float *)calloc(g_nfloats, sizeof(float));
+    ADM  = (float *)calloc(g_nfloats, sizeof(float));
+    ADV  = (float *)calloc(g_nfloats, sizeof(float));
+    if (!GRAD || !ADM || !ADV) return -2;
+    return 0;
+}
+
+/* ---- eval: PPL media sobre el corpus val en ventanas aleatorias ---- */
+static double eval_ppl_val(const uint8_t *val, size_t val_len, int n_win) {
+    if (val_len < (size_t)bT + 2) return 0.0;
+    double tot = 0.0;
+    for (int w = 0; w < n_win; w++) {
+        size_t st = (size_t)(ad_randf()
+                    * (double)(val_len - (size_t)bT - 1));
+        tot += win_fwd_bwd(&M, val + st, bT, 0);
+    }
+    return exp(tot / n_win);
+}
+
+/* ---- chunk: steps x batch con Adam sobre g_train; devuelve loss media ----
+ * reutilizable desde main y desde la futura API WASM live */
+static double train_chunk(int steps, int batch, float lr) {
+    double total = 0.0;
+    for (int step = 0; step < steps; step++) {
+        double avg = 0.0;
+        for (int bi = 0; bi < batch; bi++) {
+            size_t st = (size_t)(ad_randf()
+                        * (double)(g_train_len - (size_t)bT - 1));
+            avg += win_fwd_bwd(&M, g_train + st, bT, 1);
+        }
+        g_adam_t++;
+        float bc1 = 1.0f - powf(0.9f, (float)g_adam_t);
+        float bc2 = 1.0f - powf(0.999f, (float)g_adam_t);
+        for (size_t i = 0; i < g_nfloats; i++) {
+            float gi = GRAD[i] / (float)batch;
+            ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
+            ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
+            M.w[i] -= lr * (ADM[i] / bc1)
+                    / (sqrtf(ADV[i] / bc2) + 1e-8f);
+            GRAD[i] = 0.f;
+        }
+        total += avg / batch;
+    }
+    return total / steps;
+}
+
 int main(int argc, char **argv) {
     const char *model_in = NULL, *data_path = NULL, *val_path = NULL;
     const char *out_path = "model.adm";
@@ -155,82 +214,42 @@ int main(int argc, char **argv) {
         printf("modelo cargado: steps=%u\n", M.cfg.train_steps);
     }
 
-    /* ---- corpus ---- */
-    size_t train_len = 0, val_len = 0;
-    uint8_t *train = read_file(data_path, &train_len);
-    uint8_t *val = val_path ? read_file(val_path, &val_len) : NULL;
-    if (!train || train_len < (size_t)OPT_T + 2) {
+    /* ---- corpus (a globals; tambien los consume train_chunk) ---- */
+    g_train = read_file(data_path, &g_train_len);
+    g_val = val_path ? read_file(val_path, &g_val_len) : NULL;
+    if (!g_train || g_train_len < (size_t)OPT_T + 2) {
         fprintf(stderr, "corpus %s vacio o pequeno\n", data_path);
         return 3;
     }
-    if (val && val_len < (size_t)OPT_T + 2) { free(val); val = NULL; }
+    if (g_val && g_val_len < (size_t)OPT_T + 2) { free(g_val); g_val = NULL; }
 
     /* ---- buffers + gradientes + Adam ---- */
-    bT = OPT_T; bD = M.cfg.dim; bH = M.cfg.hidden;
-    bHD = M.cfg.head_dim; bNH = M.cfg.n_heads; bL = M.cfg.n_layers;
-    if (bufs_alloc()) { fprintf(stderr, "OOM buffers\n"); return 3; }
-    GRAD = (float *)calloc(ad_total_floats(&M.cfg), sizeof(float));
-    ADM  = (float *)calloc(ad_total_floats(&M.cfg), sizeof(float));
-    ADV  = (float *)calloc(ad_total_floats(&M.cfg), sizeof(float));
-    if (!GRAD || !ADM || !ADV) { fprintf(stderr, "OOM adam\n"); return 3; }
+    if (train_setup()) { fprintf(stderr, "OOM setup\n"); return 3; }
 
     printf("b2: modelo+corpus+buffers OK (train=%zu val=%zu)\n",
-           train_len, val ? val_len : 0);
+           g_train_len, g_val ? g_val_len : 0);
 
     /* ================== BUCLE DE ENTRENAMIENTO ================== */
-    size_t nfloats = ad_total_floats(&M.cfg);
     double ppl0 = 0.0, ppl1 = 0.0;
-
-    /* PPL inicial (eval) */
-    if (val) {
-        double tot = 0.0;
-        for (int w = 0; w < OPT_EVAL; w++) {
-            size_t st = (size_t)((double)ad_randf()
-                       * (double)(val_len - (size_t)OPT_T - 1));
-            tot += win_fwd_bwd(&M, val + st, OPT_T, 0);
-        }
-        ppl0 = exp((double)(tot / OPT_EVAL));
+    if (g_val) {
+        ppl0 = eval_ppl_val(g_val, g_val_len, OPT_EVAL);
         printf("PPL inicial: %.2f\n", ppl0);
     }
 
     clock_t t0 = clock();
-    for (int step = 1; step <= OPT_STEPS; step++) {
-        double avg = 0.0;
-        for (int bi = 0; bi < OPT_BATCH; bi++) {
-            size_t st = (size_t)(ad_randf()
-                        * (double)(train_len - (size_t)OPT_T - 1));
-            avg += win_fwd_bwd(&M, train + st, OPT_T, 1);
-        }
-        /* Adam: promedia el gradiente por B y actualiza w */
-        static int adam_t = 0;
-        adam_t++;
-        float bc1 = 1.0f - powf(0.9f, (float)adam_t);
-        float bc2 = 1.0f - powf(0.999f, (float)adam_t);
-        for (size_t i = 0; i < nfloats; i++) {
-            float gi = GRAD[i] / (float)OPT_BATCH;
-            ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
-            ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
-            M.w[i] -= OPT_LR * (ADM[i] / bc1)
-                    / (sqrtf(ADV[i] / bc2) + 1e-8f);
-            GRAD[i] = 0.f;
-        }
-        if (step % 100 == 0 || step == OPT_STEPS) {
-            printf("step %d/%d  loss=%.4f\n", step, OPT_STEPS, (float)(avg / OPT_BATCH));
-            fflush(stdout);
-        }
+    /* entrena en chunks de 100 steps mostrando loss (misma logica que WASM) */
+    int hechos = 0;
+    while (hechos < OPT_STEPS) {
+        int n = (OPT_STEPS - hechos > 100) ? 100 : OPT_STEPS - hechos;
+        double loss = train_chunk(n, OPT_BATCH, OPT_LR);
+        hechos += n;
+        printf("step %d/%d  loss=%.4f\n", hechos, OPT_STEPS, (float)loss);
+        fflush(stdout);
     }
     double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
 
     /* PPL final + gate de publicacion */
-    if (val) {
-        double tot = 0.0;
-        for (int w = 0; w < OPT_EVAL; w++) {
-            size_t st = (size_t)(ad_randf()
-                        * (double)(val_len - (size_t)OPT_T - 1));
-            tot += win_fwd_bwd(&M, val + st, OPT_T, 0);
-        }
-        ppl1 = exp(tot / OPT_EVAL);
-    }
+    if (g_val) ppl1 = eval_ppl_val(g_val, g_val_len, OPT_EVAL);
     printf("PPL final: %.2f (antes %.2f)\n", ppl1, ppl0);
     int publish = (ppl0 == 0.0) || (ppl1 < ppl0);
     if (publish) {
@@ -254,7 +273,7 @@ int main(int argc, char **argv) {
             char ds[32];
             strftime(ds, sizeof ds, "%Y-%m-%d %H:%M:%S", localtime(&now));
             size_t nparams = ad_total_floats(&M.cfg);
-            size_t nbytes = AD_HDR + nfloats * sizeof(float);
+            size_t nbytes = AD_HDR + g_nfloats * sizeof(float);
             fprintf(f, "%s,%s,%d,%.4f,%.4f,%d,%zu,%zu,%d\n", ds, out_path,
                     OPT_STEPS, ppl0, ppl1, publish, nparams, nbytes,
                     M.cfg.dim);
@@ -432,6 +451,7 @@ static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
     }
     return loss;
 }
+
 
 
 
