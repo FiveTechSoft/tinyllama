@@ -490,6 +490,21 @@ int ad_live_start(const uint8_t *model_buf, int model_len,
     return 0;
 }
 
+/* variante WASM: reusa el modelo YA cargado en g_m (adaptive.c) y copia
+ * sus pesos a M, evitando re-descargar el .adm */
+extern void *ad_global_model(void);   /* implementado abajo via helper */
+
+EMSCRIPTEN_KEEPALIVE
+int ad_live_start_from_loaded(int corpus_len, const uint8_t *corpus, int ctx) {
+    /* g_m es el modelo residente que cargó ad_load_mem: lo localizamos
+     * re-exportando sus bytes via ad_live_save-like. Simplificacion:
+     * train.c NO toca g_m; el worker pasa el buffer del modelo original.
+     * => esta funcion NO se usa; el worker llama ad_live_start con el
+     * ArrayBuffer descargado que ya tiene guardado. */
+    (void)corpus_len; (void)corpus; (void)ctx;
+    return -9;
+}
+
 EMSCRIPTEN_KEEPALIVE
 double ad_live_chunk(int steps, int batch, float lr) {
     if (!live_loaded) return -1.0;

@@ -41,6 +41,11 @@ export class Adaptive {
     });
   }
 
+  /** atajo para la UI de entrenamiento en vivo */
+  postMessage(msg, transfer) { this.#worker.postMessage(msg, transfer); }
+  addEventListener(type, h) { this.#worker.addEventListener(type, h); }
+  removeEventListener(type, h) { this.#worker.removeEventListener(type, h); }
+
   async *generate(prompt, { maxTokens = 128, temp = 0.8, topK = 40 } = {}) {
     const id = ++this.#seq;
     const queue = [];

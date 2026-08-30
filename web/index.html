@@ -38,6 +38,7 @@
   #histTable th { text-align: left; color: #8b949e; font-weight: 500; border-bottom: 1px solid #30363d; padding: .2rem .4rem; }
   #histTable td { padding: .2rem .4rem; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; }
   #histToggle { background: #21262d; font-size: .75rem; padding: .3rem .7rem; margin-bottom: .6rem; }
+  #liveLoss b { color: #d29922; }
 </style>
 </head>
 <body>
@@ -67,6 +68,13 @@
   <label>temp <input id="temp" type="number" value="0.7" step="0.1" min="0" max="2"></label>
   <label>topK <input id="topK" type="number" value="40"></label>
   <button id="new">Nueva conversación</button>
+  <button id="trainBtn" style="background:#8957e5">🎓 Entrenar en vivo</button>
+  <button id="contribBtn" style="display:none;background:#d29922">⭐ Contribuir mejora</button>
+</div>
+<div id="liveTrain" style="display:none;border:1px solid #30363d;border-radius:8px;padding:.5rem .8rem;margin-top:.5rem;background:#0a0d13">
+  <div id="liveLoss" class="sub">Loss: — · PPL: — · steps: 0</div>
+  <div id="liveBar" style="width:100%;height:6px;background:#21262d;border-radius:3px;overflow:hidden"><div style="height:100%;width:0%;background:#d29922"></div></div>
+  <canvas id="lossChart" width="340" height="60" style="margin-top:.4rem"></canvas>
 </div>
 <div id="composer">
   <textarea id="input" rows="2" placeholder="Escribe tu mensaje… (Enter para enviar)" disabled></textarea>
@@ -209,6 +217,71 @@
   $('send').onclick = send;
   $('input').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   $('new').onclick = () => { history.length = 0; $('chat').innerHTML = ''; };
+
+  /* ============ entrenamiento EN VIVO (didactico, loss real) ============ */
+  const live = { on: false, losses: [], ppl0: 0, model: 'adaptive' };
+
+  $('trainBtn').onclick = async () => {
+    if (live.on || !llm) return;
+    live.on = true;
+    $('trainBtn').disabled = true;
+    $('liveTrain').style.display = 'block';
+    $('contribBtn').style.display = 'none';
+    $('status').textContent = 'Preparando entrenamiento en vivo…';
+    const which = document.querySelector('input[name=m]:checked').value;
+    live.model = which;
+
+    /* corpus: conversaciones de esta sesion + semilla del site */
+    const seeded = 'hola que tal~buenos dias~como estas~el cielo es azul~me gusta el cafe~la vida es bella~aprender cada dia~gracias por tu ayuda';
+    const turns = history.map(t => `\x01${t.u}\x02${t.a}\x03\n`).join('') +
+      seeded.split('~').map(s => `\x01${s}\x02${s}\x03\n`).join('');
+    llm.postMessage({ cmd: 'live_start', corpus: turns || seeded, ctx: 64 });
+
+    /* 30 chunks x 20 steps; evalua PPL cada chunk; dibuja curva */
+    const losses = [];
+    let chunk = 0;
+    const CH = 30, STEPS = 40, BATCH = 4;
+    for (let c = 0; c < CH && live.on; c++) {
+      llm.postMessage({ cmd: 'live_chunk', steps: STEPS, batch: BATCH, lr: 3e-4 });
+      const prog = await new Promise((res) => {
+        llm.#worker_save = null;
+        const h = (ev) => {
+          if (ev.data.type === 'liveProgress') { llm.removeEventListener('message', h); res(ev.data); }
+        };
+        llm.addEventListener('message', h);
+      });
+      losses.push(prog.loss);
+      const pplNow = typeof prog.ppl === 'number' ? prog.ppl : 0;
+      if (c === 0) live.ppl0 = pplNow;
+      $('liveLoss').innerHTML =
+        `Loss: <b>${prog.loss.toFixed(4)}</b> · PPL: <b>${pplNow.toFixed(1)}</b> · steps: ${prog.steps}`;
+      $('liveBar').firstChild.style.width = ((c + 1) / CH * 100).toFixed(0) + '%';
+      drawLoss(losses);
+      if (c === CH - 1) $('contribBtn').style.display = 'inline-block';
+    }
+    $('trainBtn').disabled = false;
+    live.on = false;
+  };
+
+  const drawLoss = (vals) => {
+    const cv = document.getElementById('lossChart');
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (vals.length < 2) return;
+    const mx = Math.max(...vals), mn = Math.min(...vals);
+    const sp = mx - mn || 1;
+    ctx.strokeStyle = '#d29922';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const x = (cv.width - 4) * (i / (vals.length - 1)) + 2;
+      const y = 4 + (cv.height - 8) * (1 - (v - mn) / sp);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  };
+  const drawLossAlias = drawLoss;
+  const drawLossLocal = drawLoss;
 
   // carga automática del modelo por defecto (el adaptativo: rapidisimo)
   (async () => {
