@@ -20,7 +20,7 @@
 
 ## Pendientes inmediatos
 
-- [ ] **BPE pequeño (vocab ~2048) en vez de bytes**: **el cuello de botella identificado empíricamente**. Modelos dim96-L4 y dim192-L6 (5× capacidad) llegan a PPL ~13 y aún generan "sopa de palabras": con vocab=256 cada token lleva demasiado poco contenido y el modelo gasta capacidad en sintaxis byte-level. BPE 2-4k tokens + re-entreno → texto legible esperado. Requiere: vocab fijo de BPE al repo, corpus→ids, tok_emb/head 2048×dim.
+- [ ] **BPE completo (en curso, fase 1 lista)**: vocab.bpe 2048 aprendido ✅, encoder C ✅ (2.1-2.7 chars/token roundtrip OK), corpora convertidos a ids ✅ (`*_ids.bin`, python encoder verificado), `cfg.vocab` dinámico en el core ✅ (ad_init_fresh_v). **Fase 2 (pendiente):** train.c que consuma ids u32 directamente (hoy su loop es bytes &0xFF) + guardado/decodificación BPE en generación + corpus_math (921KB del mml-book) añadido al mezclador. Los PDFs didácticos (mml-book + repo rohanmistry231) ya aportan corpus matemático.
 - [ ] **IndexedDB en la web**: persistir conversaciones + hechos del usuario del chat (el análogo web de `sesion.bin`), hoy la sesión muere al recargar.
 - [ ] **Export conversaciones → contrib**: además de pesos, los usuarios podrían contribuir sus conversaciones (con el mismo gate).
 - [ ] **int8 en formato ADM**: pesos cuantizados on-disk (2MB→0.5MB, 4× menos descarga); descuantizar on-load; entrena en FP32 (artículo Jalapeño, punto 4).
