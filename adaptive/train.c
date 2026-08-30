@@ -137,25 +137,47 @@ static double eval_ppl_val(const uint8_t *val, size_t val_len, int n_win) {
     return exp(tot / n_win);
 }
 
-/* ---- chunk: steps x batch con Adam sobre g_train; devuelve loss media ----
- * reutilizable desde main y desde la futura API WASM live */
-static double train_chunk(int steps, int batch, float lr) {
+/* ---- chunk: steps x batch con Adam + cosine schedule + warmup + clipping
+ * (schedule segun Karpeles ch.3: LR alto temprano, decae suave al final;
+ *  recorte de gradiente global para evitar explosiones sin supervision)
+ * total_steps: horizon de steps para el cosine (si 0 => sin schedule) ---- */
+static double train_chunk(int steps, int batch, float lr, int total_steps) {
     double total = 0.0;
     for (int step = 0; step < steps; step++) {
         double avg = 0.0;
+        float grad_norm = 0.f;
         for (int bi = 0; bi < batch; bi++) {
             size_t st = (size_t)(ad_randf()
                         * (double)(g_train_len - (size_t)bT - 1));
             avg += win_fwd_bwd(&M, g_train + st, bT, 1);
         }
+        /* LR efectivo: warmup lineal (10% del total) + cosine annealing */
+        float lr_now = lr;
+        if (total_steps > 0) {
+            int t = g_adam_t, T = total_steps;
+            if (t < T / 10) {
+                lr_now = lr * (float)(t + 1) / (float)(T / 10);
+            } else {
+                float prog = (float)(t - T / 10) / (float)(T - T / 10);
+                if (prog > 1.f) prog = 1.f;
+                lr_now = lr * 0.5f * (1.0f + cosf(3.14159265f * prog));
+            }
+        }
+        /* clipping: norma L2 global del gradiente (recorta si > 1.0) */
+        for (size_t i = 0; i < g_nfloats; i++)
+            grad_norm += GRAD[i] * GRAD[i];
+        grad_norm = sqrtf(grad_norm / (float)batch);
+        float scale = 1.0f;
+        if (grad_norm > 1.0f) scale = 1.0f / grad_norm;
+
         g_adam_t++;
         float bc1 = 1.0f - powf(0.9f, (float)g_adam_t);
         float bc2 = 1.0f - powf(0.999f, (float)g_adam_t);
         for (size_t i = 0; i < g_nfloats; i++) {
-            float gi = GRAD[i] / (float)batch;
+            float gi = (GRAD[i] / (float)batch) * scale;
             ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
             ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
-            M.w[i] -= lr * (ADM[i] / bc1)
+            M.w[i] -= lr_now * (ADM[i] / bc1)
                     / (sqrtf(ADV[i] / bc2) + 1e-8f);
             GRAD[i] = 0.f;
         }
@@ -237,11 +259,11 @@ int main(int argc, char **argv) {
     }
 
     clock_t t0 = clock();
-    /* entrena en chunks de 100 steps mostrando loss (misma logica que WASM) */
+    /* entrena en chunks de 100 steps con cosine+clip (schedule sobre total) */
     int hechos = 0;
     while (hechos < OPT_STEPS) {
         int n = (OPT_STEPS - hechos > 100) ? 100 : OPT_STEPS - hechos;
-        double loss = train_chunk(n, OPT_BATCH, OPT_LR);
+        double loss = train_chunk(n, OPT_BATCH, OPT_LR, OPT_STEPS);
         hechos += n;
         printf("step %d/%d  loss=%.4f\n", hechos, OPT_STEPS, (float)loss);
         fflush(stdout);
@@ -508,7 +530,7 @@ int ad_live_start_from_loaded(int corpus_len, const uint8_t *corpus, int ctx) {
 EMSCRIPTEN_KEEPALIVE
 double ad_live_chunk(int steps, int batch, float lr) {
     if (!live_loaded) return -1.0;
-    return train_chunk(steps, batch, lr);
+    return train_chunk(steps, batch, lr, 0); /* live: sin schedule */
 }
 
 EMSCRIPTEN_KEEPALIVE
