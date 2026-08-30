@@ -1,0 +1,75 @@
+name: Gate de contribuciones live
+
+# PRs de contrib/lives-*: evalua los pesos aportados contra el corpus
+# canario y SOLO fusiona a main si la PPL mejora (moderacion automatica).
+on:
+  pull_request:
+    branches: [main]
+    paths: ["adaptive/contrib/**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Compilar trainer canario
+        run: |
+          sudo apt-get install -y gcc
+          gcc -O3 -mavx2 -o train adaptive/train.c adaptive/ad_core.c -lm
+        working-directory: ${{ github.workspace }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Descargar pesos contribuidos del PR
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          git fetch origin $BRANCH
+          git show origin/$BRANCH:adaptive/contrib/*.adm > candidate.adm
+          git show origin/main:adaptive/model.adm > baseline.adm
+          ls -la *.adm
+
+      - name: Evaluar PPL de baseline vs contribucion (corpus canario)
+        id: eval
+        run: |
+          cd adaptive
+          cp ../*.adm ../adaptive/ 2>/dev/null || true
+          # corpus canario: el commiteado (peng-mimo + hoy)
+          CAN=corpus_peng.bin
+          [ -f "$CAN" ] || { echo "falta corpus canario"; exit 1; }
+          # PPL baseline (100 ventanas, ctx 96)
+          ../train --model ../baseline.adm --data "$CAN" --val "$CAN" \
+            --steps 1 --batch 1 --ctx 96 --eval 100 --out /tmp/bl.adm | tee bl.log
+          ../train --model ../candidate.adm --data "$CAN" --val "$CAN" \
+            --steps 1 --batch 1 --ctx 96 --eval 100 --out /tmp/c.adm | tee ca.log
+          BL=$(grep -oP 'PPL final: \K[0-9.]+' ../bl.log || echo 999)
+          CA=$(grep -oP 'PPL final: \K[0-9.]+|PPL inicial: \K[0-9.]+' ../ca.log | head -1)
+          echo "baseline_ppl=$BL" >> $GITHUB_OUTPUT
+          echo "candidate_ppl=$CA" >> $GITHUB_OUTPUT
+
+      - name: Fusion si y solo si mejora PPL
+        if: success()
+        run: |
+          BL="${{ steps.eval.outputs.baseline_ppl }}"
+          CA="${{ steps.eval.outputs.candidate_ppl }}"
+          echo "baseline=$BL candidata=$CA"
+          BETTER=$(python3 -c "print(1 if float('$CA') < float('$BL') else 0)")
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "📊 Gate de PPL — baseline **$BL** vs contribución **$CA** → $( [ "$CA" \> "$BL" ] && echo '❌ rechazada, no mejora' || echo '✅ mejora, integrada' )"
+          if python3 -c "exit(0 if float('$CA') < float('$BL') else 1)"; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout main
+            git merge --no-ff origin/${{ github.head_ref }} -m "gate OK: contribucion mejora PPL ($CA < $BL)"
+            git push origin main
+            gh pr merge ${{ github.event.pull_request.number }} --merge || true
+          else
+            gh pr close ${{ github.event.pull_request.number }} --comment "Rechazada por el gate de PPL." || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -280,8 +280,85 @@
     });
     ctx.stroke();
   };
-  const drawLossAlias = drawLoss;
-  const drawLossLocal = drawLoss;
+
+  /* ===== contribucion DIRECTA: PR automatica con los pesos entrenados ===== */
+  $('contribBtn').onclick = async () => {
+    const token = prompt(
+      'Token de GitHub (minimo public_repo). Solo vive en tu navegador:\n' +
+      'https://github.com/settings/tokens/new?scopes=public_repo');
+    if (!token) return;
+    $('contribBtn').disabled = true;
+    $('status').textContent = 'Exportando pesos entrenados…';
+    /* 1. pedir los pesos al worker */
+    const ev = await new Promise((res) => {
+      const h = (e) => {
+        if (e.data.type === 'liveSaved') { llm.removeEventListener('message', h); res(e.data); }
+      };
+      llm.addEventListener('message', h);
+      llm.postMessage({ cmd: 'live_save', max: 4194304 });
+    });
+    const bytes = new Uint8Array(ev.bytes);
+    let b64 = '';
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const branch = 'contrib/lives-' + ts;
+    const path = 'adaptive/contrib/lives-' + ts + '.adm';
+    const H = {
+      'Authorization': 'Bearer ' + token,
+      'Accept': 'application/vnd.github+json',
+    };
+    try {
+      /* 2. branch desde main */
+      const refRes = await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/refs/heads/main');
+      const ref = await refRes.json();
+      await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/refs', {
+        method: 'POST', headers: H,
+        body: JSON.stringify({ ref: 'refs/heads/' + branch, sha: ref.object.sha }),
+      });
+      /* 3. blob */
+      const blobRes = await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/blobs', {
+        method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: b64, encoding: 'base64' }),
+      });
+      const blob = await blobRes.json();
+      /* 4. commit */
+      const treeRes = await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/trees', {
+        method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_tree: ref.object.sha,
+          tree: [{ path: path, mode: '100644', type: 'blob', sha: blob.sha }],
+        }),
+      });
+      const tree = await treeRes.json();
+      const cmRes = await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/commits', {
+        method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'contrib: pesos entrenados en navegador ' + ts,
+          tree: tree.sha, parents: [ref.object.sha],
+        }),
+      });
+      const cm = await cmRes.json();
+      await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/git/refs/heads/' + branch, {
+        method: 'PATCH', headers: H, body: JSON.stringify({ sha: cm.sha }),
+      });
+      /* 5. PR */
+      const prRes = await fetch('https://api.github.com/repos/FiveTechSoft/tinyllama/pulls', {
+        method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'contrib: entrenamiento en vivo ' + ts,
+          head: branch, base: 'main',
+          body: 'Pesos entrenados en la web (loss en vivo) listos para el gate de PPL.',
+        }),
+      });
+      const pr = await prRes.json();
+      $('status').textContent = 'PR creada: ' + (pr.html_url || pr.message);
+      if (pr.html_url) window.open(pr.html_url, '_blank');
+    } catch (e) {
+      $('status').textContent = 'ERROR contrib: ' + e.message;
+    }
+    $('contribBtn').disabled = false;
+  };
 
   // carga automática del modelo por defecto (el adaptativo: rapidisimo)
   (async () => {
