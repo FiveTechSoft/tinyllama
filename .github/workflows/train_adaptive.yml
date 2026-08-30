@@ -69,48 +69,12 @@ jobs:
             python3 -c "data = open('batch.jsonl','rb').read(); data = data.decode('utf-16').encode('utf-8') if data[:2] == b'\xff\xfe' else data; open('batch_u8.jsonl','wb').write(data); print('batch hoy:', len(data), 'bytes')"
             ./prep_data corpus_hoy.bin batch_u8.jsonl
           fi
-          # FineTome-100k completo: descarga parquet y convierte (no se commitea)
-          if [ ! -f corpus_ft_big.bin ]; then
-            python3 -c "
-            import urllib.request, json
-            url = 'https://huggingface.co/datasets/mlabonne/FineTome-100k/resolve/main/data/train-00000-of-00001.parquet'
-            req = urllib.request.Request(url, headers={'User-Agent': 'tinyllama-adaptive/0.1'})
-            open('finetome.parquet','wb').write(urllib.request.urlopen(req, timeout=300).read())
-            print('parquet OK')
-            "
-            python3 -c "
-            import pyarrow.parquet as pq, json
-            tbl = pq.read_table('finetome.parquet', columns=['conversations'])
-            with open('hf_finetome_full.jsonl','w',encoding='utf-8') as f:
-                for i in range(tbl.num_rows):
-                    conv = tbl['conversations'][i].as_py()
-                    if conv: f.write(json.dumps({'conversations': conv}, ensure_ascii=False)+'\n')
-            print('rows:', tbl.num_rows)
-            "
-            ./ft_ingest corpus_ft_big.bin hf_finetome_full.jsonl
-            rm -f finetome.parquet hf_finetome_full.jsonl
-          fi
-          # mezcla: hoy + historico peng-mimo + FineTome
+          # FineTome-100k completo: descarga y convierte (cacheado, no commiteado)
+          python3 ../../scripts/finetome_prep.py 2>/dev/null || python3 ../scripts/finetome_prep.py
+          # mezcla: hoy + historico peng-mimo + FineTome rotante
           cat corpus_peng.bin corpus_ft_small.bin > corpus_total.bin
           [ -f corpus_hoy.bin ] && cat corpus_hoy.bin >> corpus_total.bin
-          # FineTome completo: contribuye 15M aleatorios por ciclo (ventana rotante)
-          if [ -f corpus_ft_big.bin ]; then
-            python3 -c "
-            import random
-            random.seed(42 + $GITHUB_RUN_NUMBER % 1000)
-            data = open('corpus_ft_big.bin','rb').read()
-            n_rec = data.count(bytes([3]))  # fin de registro
-            # slice aleatorio de ~15MB alineado a registros
-            target = 15_000_000
-            start = random.randint(0, max(0, len(data) - target - 2))
-            i = data.rfind(bytes([3]), 0, start)
-            j = data.find(bytes([3]), min(start + target, len(data)-1))
-            j = j+1 if j != -1 else len(data)
-            open('corpus_ft_rot.bin','wb').write(data[i:j])
-            print('rot slice:', j-i, 'bytes desde', i)
-            "
-            cat corpus_ft_rot.bin >> corpus_total.bin
-          fi
+          [ -f corpus_ft_rot.bin ] && cat corpus_ft_rot.bin >> corpus_total.bin
           echo "corpus_total: $(stat -c%s corpus_total.bin) bytes"; ls -la corpus_*.bin
 
       - name: Entrenar (gate de publicacion por PPL)
