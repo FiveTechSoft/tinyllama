@@ -60,12 +60,7 @@ jobs:
           # corpus nuevo: lo de hoy, normalizado a UTF-8
           cat ../pm/dataset/verified/prog-*.jsonl > batch.jsonl 2>/dev/null || true
           if [ -s batch.jsonl ]; then
-            python3 -c "
-            data = open('batch.jsonl','rb').read()
-            if data[:2] == b'\xff\xfe': data = data.decode('utf-16').encode('utf-8')
-            open('batch_u8.jsonl','wb').write(data)
-            print('batch hoy:', len(data), 'bytes')
-            "
+            python3 -c "data = open('batch.jsonl','rb').read(); data = data.decode('utf-16').encode('utf-8') if data[:2] == b'\xff\xfe' else data; open('batch_u8.jsonl','wb').write(data); print('batch hoy:', len(data), 'bytes')"
             ./prep_data corpus_hoy.bin batch_u8.jsonl
           fi
           # corpus historico commiteado (peng_batch_u8.jsonl) + el de hoy
