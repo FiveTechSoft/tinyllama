@@ -455,3 +455,71 @@ static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
 
 
 
+
+/* ==================================================================
+ *  API WASM: entrenamiento EN VIVO desde el navegador
+ *  MISMAS funciones que el CLI (train_chunk/eval_ppl_val) ? no un
+ *  duplicado degradado. El corpus llega por buffer, los pesos mejorados
+ *  se exportan a un buffer que JS puede serializar y descargar.
+ *
+ *   ad_live_start(model_buf, model_len, corpus, corpus_len, ctx)
+ *   ad_live_chunk(steps, batch, lr) -> loss media
+ *   ad_live_eval()                  -> ppl sobre el corpus en memoria
+ *   ad_live_save(buf)               -> vuelca el modelo padre (ADMF completo)
+ *   ad_live_steps()                 -> pasos acumulados de Adam
+ * ================================================================== */
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+static int live_loaded = 0;
+
+EMSCRIPTEN_KEEPALIVE
+int ad_live_start(const uint8_t *model_buf, int model_len,
+                  const uint8_t *corpus, int corpus_len, int ctx) {
+    if (ad_load_from(&M, model_buf, model_len) != 0) return -1;
+    if (corpus_len < ctx + 2) return -2;
+    g_train = (uint8_t *)malloc((size_t)corpus_len);
+    if (!g_train) return -3;
+    memcpy((void *)g_train, corpus, (size_t)corpus_len);
+    g_train_len = (size_t)corpus_len;
+    g_val = g_train;                 /* eval sobre el mismo corpus (didactico) */
+    g_val_len = g_train_len;
+    srand(12345);                    /* reproducible en el navegador */
+    if (train_setup()) return -4;
+    live_loaded = 1;
+    return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+double ad_live_chunk(int steps, int batch, float lr) {
+    if (!live_loaded) return -1.0;
+    return train_chunk(steps, batch, lr);
+}
+
+EMSCRIPTEN_KEEPALIVE
+double ad_live_eval(void) {
+    if (!live_loaded || !g_val) return 0.0;
+    return eval_ppl_val(g_val, g_val_len, 30);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int ad_live_steps(void) { return g_adam_t; }
+
+/* exporta: cabecera ADM + pesos (mismo formato que ad_save, via buffer) */
+EMSCRIPTEN_KEEPALIVE
+int ad_live_save(uint8_t *out, int out_max) {
+    if (!live_loaded) return -1;
+    size_t need = AD_HDR + g_nfloats * sizeof(float);
+    if ((size_t)out_max < need) return -2;
+    uint32_t hdr[9] = {
+        0x464D4441u, 1u,
+        (uint32_t)M.cfg.dim, (uint32_t)M.cfg.n_layers,
+        (uint32_t)M.cfg.n_heads, (uint32_t)M.cfg.hidden,
+        (uint32_t)M.cfg.max_seq, M.cfg.train_steps, M.cfg.flags
+    };
+    memcpy(out, hdr, AD_HDR);   /* 36 bytes = 9 * 4 */
+    memcpy(out + AD_HDR, M.w, g_nfloats * sizeof(float));
+    M.cfg.train_steps += (uint32_t)g_adam_t;
+    return (int)need;
+}
+#endif
