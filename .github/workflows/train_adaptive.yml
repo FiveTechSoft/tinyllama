@@ -46,6 +46,7 @@ jobs:
           cd adaptive
           gcc -O3 -mavx2 -o train train.c ad_core.c -lm
           gcc -O2 -o prep_data prep_data.c
+          gcc -O2 -o ft_ingest ft_ingest.c
 
       - name: Dataset desde peng-mimo (clone shallow)
         run: |
