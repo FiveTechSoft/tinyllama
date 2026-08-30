@@ -54,7 +54,7 @@ jobs:
 
       - name: Assemble site
         run: |
-          cp web/index.html web/tinyllama.js web/adaptive.js web/llm-worker.js web/coi-serviceworker.js site/
+          cp web/index.html web/tinyllama.js web/adaptive.js web/history.js web/llm-worker.js web/coi-serviceworker.js site/
           cp web/adaptive-worker.js site/
           cp -r web/model site/model
           mkdir -p site/adaptive

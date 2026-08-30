@@ -244,15 +244,20 @@ int main(int argc, char **argv) {
     } else {
         printf("RECHAZADO: ppl no mejoro, no se publica\n");
     }
-    /* metrics.csv */
+    /* metrics.csv
+     * columnas: fecha,modelo,steps,ppl0,ppl1,published,params,bytes,dim,L
+     * (params/bytes permiten graficar la evolucion del tamano) */
     {
         FILE *f = fopen("metrics.csv", "a");
         if (f) {
             time_t now = time(NULL);
             char ds[32];
             strftime(ds, sizeof ds, "%Y-%m-%d %H:%M:%S", localtime(&now));
-            fprintf(f, "%s,%s,%d,%.4f,%.4f,%d\n", ds, out_path, OPT_STEPS,
-                    ppl0, ppl1, publish);
+            size_t nparams = ad_total_floats(&M.cfg);
+            size_t nbytes = AD_HDR + nfloats * sizeof(float);
+            fprintf(f, "%s,%s,%d,%.4f,%.4f,%d,%zu,%zu,%d\n", ds, out_path,
+                    OPT_STEPS, ppl0, ppl1, publish, nparams, nbytes,
+                    M.cfg.dim);
             fclose(f);
         }
     }
