@@ -108,7 +108,9 @@ jobs:
             echo "sin cambios que publicar"
           else
             git commit -m "adaptive: ciclo de entrenamiento automatico $(date -u +%Y-%m-%dT%H:%M)"
-            git push
+            # rebasa por si alguien (humano u otro run) pusheo mientras entrenaba
+            git pull --rebase origin main || git rebase --abort || true
+            git push || (git pull --rebase origin main && git push)
           fi
 
       - name: Re-deploy Pages con el modelo mejorado
