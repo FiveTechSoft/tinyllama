@@ -6,13 +6,14 @@ import urllib.request, os, random, sys
 BIG = "corpus_ft_big.bin"
 
 def download_convert():
-    # 1. parquet -> jsonl
+    # 1. parquet -> jsonl (instala pyarrow si falta)
+    os.system("pip install -q pyarrow 2>/dev/null || pip3 install -q pyarrow")
+    import pyarrow.parquet as pq
     url = "https://huggingface.co/datasets/mlabonne/FineTome-100k/resolve/main/data/train-00000-of-00001.parquet"
     req = urllib.request.Request(url, headers={"User-Agent": "tinyllama-adaptive/0.1"})
     print("descargando parquet (~116MB)...")
     open("finetome.parquet", "wb").write(urllib.request.urlopen(req, timeout=600).read())
     print("parquet OK")
-    import pyarrow.parquet as pq
     tbl = pq.read_table("finetome.parquet", columns=["conversations"])
     print("rows:", tbl.num_rows)
     with open("hf_finetome_full.jsonl", "w", encoding="utf-8") as f:
