@@ -123,16 +123,18 @@ float ad_gauss(void) {
 
 /* ================= layout =================
  * orden de tensores en la arena:
- *   tok_emb[256*dim], pos_emb[max_seq*dim],
+ *   tok_emb[vocab*dim], pos_emb[max_seq*dim],
  *   por capa l (base = layers + l*per_layer):
  *     ln1g[d] ln1b[d] Wqkv[d*3d] bqkv[3d] Wproj[d*d] bproj[d]
  *     ln2g[d] ln2b[d] W1[d*hid] b1[hid] W2[hid*d] b2[d]
- * tail: lnfg[d] lnfb[d] Whead[256*dim] bhead[256]
+ * tail: lnfg[d] lnfb[d] Whead[vocab*dim] bhead[vocab]
+ * vocab dinamico: c->vocab = 256 (byte-level) o 2048+ (BPE)
  */
 void ad_layout_build(AdConfig *c, AdLayout *L) {
     size_t d = (size_t)c->dim, hid = (size_t)c->hidden;
+    size_t V = (size_t)(c->vocab > 0 ? c->vocab : 256);
     L->tok_emb = 0;
-    L->pos_emb = AD_VOCAB * d;
+    L->pos_emb = V * d;
     L->layers  = L->pos_emb + (size_t)c->max_seq * d;
     size_t rel = 2 * d                       /* ln1 g,b */
         + d * 3 * d + 3 * d                  /* Wqkv, bqkv */
@@ -144,8 +146,8 @@ void ad_layout_build(AdConfig *c, AdLayout *L) {
     L->lnf_g  = L->layers + (size_t)c->n_layers * rel;
     L->lnf_b  = L->lnf_g + d;
     L->w_head = L->lnf_b + d;
-    L->b_head = L->w_head + AD_VOCAB * d;
-    L->total  = L->b_head + AD_VOCAB;
+    L->b_head = L->w_head + V * d;
+    L->total  = L->b_head + V;
 }
 
 size_t ad_total_floats(const AdConfig *c) {
@@ -158,8 +160,9 @@ size_t ad_total_floats(const AdConfig *c) {
 
 int ad_model_alloc(AdModel *m) {
     ad_layout_build(&m->cfg, &m->lay);
+    size_t V = (size_t)(m->cfg.vocab > 0 ? m->cfg.vocab : 256);
     m->w      = (float *)calloc(m->lay.total, sizeof(float));
-    m->logits = (float *)malloc((size_t)AD_VOCAB * sizeof(float));
+    m->logits = (float *)malloc((size_t)V * sizeof(float));
     m->tokens = (int *)malloc((size_t)m->cfg.max_seq * sizeof(int));
     if (!m->w || !m->logits || !m->tokens) return -1;
     m->n_tok = 0;
@@ -174,10 +177,18 @@ void ad_model_free(AdModel *m) {
 }
 
 /* inicializacion estilo GPT-2: std 0.02 (escalado por capas), LN gamma=1 */
+/* init GPT-2 (std 0.02/sqrt(2L)); gammas de LN a 1, biases a 0 (calloc)
+ * modo BPE: bpe_vocab>0 fija cfg.vocab */
 int ad_init_fresh(AdModel *m, int dim, int n_layers, int n_heads, int seq) {
+    return ad_init_fresh_v(m, dim, n_layers, n_heads, seq, 256);
+}
+
+int ad_init_fresh_v(AdModel *m, int dim, int n_layers, int n_heads, int seq,
+                    int vocab) {
     if (dim <= 0 || n_heads <= 0 || dim % n_heads) return -1;
     if (n_layers < 1 || n_layers > AD_MAX_LAYERS) return -2;
     if (seq < 2 || seq > AD_MAX_SEQ) return -3;
+    if (vocab < 256 || vocab > AD_VOCAB_MAX) return -5;
     memset(m, 0, sizeof(*m));
     m->cfg.dim = dim;
     m->cfg.n_layers = n_layers;
@@ -185,18 +196,20 @@ int ad_init_fresh(AdModel *m, int dim, int n_layers, int n_heads, int seq) {
     m->cfg.hidden = 4 * dim;
     m->cfg.max_seq = seq;
     m->cfg.head_dim = dim / n_heads;
+    m->cfg.vocab = vocab;
     m->cfg.train_steps = 0;
     m->cfg.flags = 0;
     if (ad_model_alloc(m) != 0) return -4;
 
     float std = 0.02f / sqrtf(2.0f * (float)n_layers);
+    size_t V = (size_t)vocab;
     /* tok_emb y Whead con gaussiana; todo lo demas queda a 0 (calloc):
      * biases 0, gammas LN 1 */
-    for (size_t i = 0; i < AD_VOCAB * (size_t)dim; i++)
+    for (size_t i = 0; i < V * (size_t)dim; i++)
         m->w[m->lay.tok_emb + i] = std * ad_gauss();
     for (size_t i = 0; i < (size_t)dim; i++)
         m->w[m->lay.lnf_g + i] = 1.0f;
-    for (size_t i = 0; i < AD_VOCAB * (size_t)dim; i++)
+    for (size_t i = 0; i < V * (size_t)dim; i++)
         m->w[m->lay.w_head + i] = std * ad_gauss();
     /* gammas por capa = 1: ln1g en offset 0 del bloque, ln2g tras
      * ln1g[d] ln1b[d] Wqkv[d*3d] bqkv[3d] Wproj[d*d] bproj[d] */
@@ -354,9 +367,12 @@ void ad_forward(AdModel *m) {
     }
 
     ad_layernorm(s_h, x, m->w + m->lay.lnf_g, m->w + m->lay.lnf_b, dim);
-    ad_matmul(m->logits, m->w + m->lay.w_head, s_h, AD_VOCAB, dim);
-    for (int i = 0; i < AD_VOCAB; i++)
-        m->logits[i] += m->w[m->lay.b_head + i];
+    {
+        size_t V = (size_t)(m->cfg.vocab > 0 ? m->cfg.vocab : 256);
+        ad_matmul(m->logits, m->w + m->lay.w_head, s_h, (int)V, dim);
+        for (size_t i = 0; i < V; i++)
+            m->logits[i] += m->w[m->lay.b_head + i];
+    }
 }
 
 /* ---------------- API de conversacion ---------------- */
@@ -383,31 +399,38 @@ int ad_set_prompt(AdModel *m, const char *text) {
 
 int ad_step(AdModel *m, float temp, int top_k) {
     if (m->n_tok >= m->cfg.max_seq - 1) return -1;
+    size_t V = (size_t)(m->cfg.vocab > 0 ? m->cfg.vocab : 256);
+    static float *s_p = NULL; static int *s_idx = NULL;
+    static size_t s_cap = 0;
+    if (s_cap < V) {
+        free(s_p); free(s_idx);
+        s_p = (float *)malloc(V * sizeof(float));
+        s_idx = (int *)malloc(V * sizeof(int));
+        if (!s_p || !s_idx) return -2;
+        s_cap = V;
+    }
     float mx = m->logits[0];
-    for (int i = 1; i < AD_VOCAB; i++) if (m->logits[i] > mx) mx = m->logits[i];
-    float p[AD_VOCAB], sum = 0.f;
-    for (int i = 0; i < AD_VOCAB; i++) {
-        p[i] = expf((m->logits[i] - mx) / temp);
-        sum += p[i];
-    }
-    for (int i = 0; i < AD_VOCAB; i++) p[i] /= sum;
+    for (size_t i = 1; i < V; i++) if (m->logits[i] > mx) mx = m->logits[i];
+    float sum = 0.f;
+    for (size_t i = 0; i < V; i++) s_p[i] = expf((m->logits[i] - mx) / temp);
+    for (size_t i = 0; i < V; i++) sum += s_p[i];
+    for (size_t i = 0; i < V; i++) s_p[i] /= sum;
 
-    int idx[AD_VOCAB];
-    for (int i = 0; i < AD_VOCAB; i++) idx[i] = i;
-    for (int i = 1; i < AD_VOCAB; i++) {           /* insertion sort desc */
-        int idv = idx[i];
-        int j = i - 1;
-        while (j >= 0 && p[idx[j]] < p[idv]) { idx[j+1] = idx[j]; j--; }
-        idx[j+1] = idv;
+    for (size_t i = 0; i < V; i++) s_idx[i] = (int)i;
+    for (size_t i = 1; i < V; i++) {                /* insertion sort desc */
+        int idv = s_idx[i];
+        size_t j = i - 1;
+        while (j >= 0 && s_p[s_idx[j]] < s_p[idv]) { s_idx[j+1] = s_idx[j]; j--; }
+        s_idx[j+1] = idv;
     }
-    if (top_k <= 0 || top_k > AD_VOCAB) top_k = AD_VOCAB;
+    if (top_k <= 0 || top_k > (int)V) top_k = (int)V;
     float acc = 0.f;
-    for (int i = 0; i < top_k; i++) acc += p[idx[i]];
+    for (int i = 0; i < top_k; i++) acc += s_p[s_idx[i]];
     float r = ad_randf() * acc;
-    int next = idx[top_k - 1];
+    int next = s_idx[top_k - 1];
     for (int i = 0; i < top_k; i++) {
-        r -= p[idx[i]];
-        if (r <= 0.f) { next = idx[i]; break; }
+        r -= s_p[s_idx[i]];
+        if (r <= 0.f) { next = s_idx[i]; break; }
     }
     if (next == AD_CTL_EOS || next == AD_CTL_USER) return -1;
     m->tokens[m->n_tok++] = next;
@@ -520,3 +543,4 @@ int ad_generate_n(const char *prompt, int max_tokens, float temp, int top_k,
     return n;
 }
 #endif
+

@@ -1,0 +1,13 @@
+cargando corpora...
+bytes: 14128299
+entrenando 1792 merges (vocab 2048)...
+palabras unicas: 42094
+merge 0 ok, mejor par (116, 104) cnt 255380
+merge 200 ok, mejor par (116, 121) cnt 5763
+merge 400 ok, mejor par (102, 100172) cnt 2747
+merge 600 ok, mejor par (89, 100020) cnt 1753
+merge 800 ok, mejor par (100102, 100438) cnt 1248
+merge 1000 ok, mejor par (100405, 100011) cnt 944
+merge 1200 ok, mejor par (115, 100091) cnt 741
+merge 1400 ok, mejor par (100099, 100234) cnt 597
+merge 1600 ok, mejor par (100552, 100018) cnt 505

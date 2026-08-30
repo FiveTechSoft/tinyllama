@@ -18,7 +18,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define AD_VOCAB   256
+#define AD_VOCAB_MIN 256      /* bytes + controles */
+#define AD_VOCAB_MAX 65536    /* BPE grandes */
+#define AD_VOCAB     AD_VOCAB_MIN   /* compat: default byte-level */
 #define AD_MAX_SEQ 512
 #define AD_MAX_LAYERS 12
 #define AD_HDR     36
@@ -32,6 +34,7 @@
 typedef struct {
     int dim, n_layers, n_heads, hidden, max_seq;
     int head_dim;            /* dim / n_heads */
+    int vocab;               /* 256 (bytes) o 2048+ (BPE) */
     uint32_t train_steps, flags;
 } AdConfig;
 
@@ -57,6 +60,8 @@ size_t ad_total_floats(const AdConfig *c);
 int  ad_model_alloc(AdModel *m);       /* usa m->cfg */
 void ad_model_free(AdModel *m);
 int  ad_init_fresh(AdModel *m, int dim, int n_layers, int n_heads, int seq);
+int  ad_init_fresh_v(AdModel *m, int dim, int n_layers, int n_heads, int seq,
+                     int vocab);
 int  ad_load(AdModel *m, const char *path);
 int  ad_save(AdModel *m, const char *path);
 int  ad_load_from(AdModel *m, const uint8_t *buf, int size);

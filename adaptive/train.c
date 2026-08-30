@@ -239,6 +239,9 @@ int main(int argc, char **argv) {
     /* ---- corpus (a globals; tambien los consume train_chunk) ---- */
     g_train = read_file(data_path, &g_train_len);
     g_val = val_path ? read_file(val_path, &g_val_len) : NULL;
+    /* BARI corpus (ids u32): convierte a in-place bytes (id<256: byte; id>=256
+     * expande a su secuencia de bytes via vocab del corpus? no - byte-level
+     * fallback: los ids >=256 NO caben en byte => modo ids no soportado aqui */
     if (!g_train || g_train_len < (size_t)OPT_T + 2) {
         fprintf(stderr, "corpus %s vacio o pequeno\n", data_path);
         return 3;

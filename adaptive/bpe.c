@@ -76,14 +76,32 @@ int bpe_load(const char *path) {
 
 int bpe_ntokens(void) { return loaded ? ntok : 256; }
 
-/* longitud del match mas largo que empiece en text[pos] */
+/* longitud del match mas largo que empiece en text[pos]
+ * buceo por buckets de primer byte (O(candidatos) no O(2048)) */
+typedef struct { int ids[256]; int n; } Bucket;
+static Bucket buckets[256];      /* indexado por primer byte del token */
+static int buckets_ok = 0;
+
 static int longest_match(const unsigned char *text, int pos, int len) {
+    if (!buckets_ok) { /* lazily construye una vez */
+        for (int i = 0; i < ntok; i++) {
+            if (tok_tab[i].str_len < 1) continue;
+            unsigned char c = (unsigned char)tok_tab[i].str[0];
+            if (buckets[c].n < 256) buckets[c].ids[buckets[c].n++] = i;
+        }
+        buckets_ok = 1;
+    }
     int best = -1;
-    for (int i = 0; i < (ntok < 2048 ? ntok : 2048); i++) {
+    int bestlen = 0;
+    unsigned char c0 = text[pos];
+    Bucket *bk = &buckets[c0];
+    for (int k = 0; k < bk->n; k++) {
+        int i = bk->ids[k];
         int L = tok_tab[i].str_len;
-        if (L < 1 || L > len - pos) continue;
-        if (best >= 0 && L <= tok_tab[best].str_len) continue;
-        if (memcmp(text + pos, tok_tab[i].str, (size_t)L) == 0) best = i;
+        if (L <= bestlen || L > len - pos) continue;
+        if (memcmp(text + pos, tok_tab[i].str, (size_t)L) == 0) {
+            best = i; bestlen = L;
+        }
     }
     return best;
 }

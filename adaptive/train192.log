@@ -1,0 +1,36 @@
+modelo fresco: dim=192 L=6 H=6
+b2: modelo+corpus+buffers OK (train=6947358 val=6947358)
+PPL inicial: 255.02
+step 100/3000  loss=5.4420
+step 200/3000  loss=4.8756
+step 300/3000  loss=4.0289
+step 400/3000  loss=3.3582
+step 500/3000  loss=3.0160
+step 600/3000  loss=2.8633
+step 700/3000  loss=2.7901
+step 800/3000  loss=2.7248
+step 900/3000  loss=2.7089
+step 1000/3000  loss=2.6952
+step 1100/3000  loss=2.6752
+step 1200/3000  loss=2.6532
+step 1300/3000  loss=2.6568
+step 1400/3000  loss=2.6565
+step 1500/3000  loss=2.6451
+step 1600/3000  loss=2.6231
+step 1700/3000  loss=2.6307
+step 1800/3000  loss=2.6139
+step 1900/3000  loss=2.6328
+step 2000/3000  loss=2.6333
+step 2100/3000  loss=2.6241
+step 2200/3000  loss=2.6196
+step 2300/3000  loss=2.6127
+step 2400/3000  loss=2.5989
+step 2500/3000  loss=2.5967
+step 2600/3000  loss=2.6014
+step 2700/3000  loss=2.6120
+step 2800/3000  loss=2.6014
+step 2900/3000  loss=2.6171
+step 3000/3000  loss=2.6122
+PPL final: 13.27 (antes 255.02)
+PUBLICADO: C:\tinyllama\adaptive\model_192.adm (mejora 255.02 -> 13.27)
+listo (5718.0s)
