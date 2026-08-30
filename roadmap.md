@@ -20,9 +20,21 @@
 
 ## Pendientes inmediatos
 
+- [ ] **BPE pequeño (vocab ~2048) en vez de bytes**: **el cuello de botella identificado empíricamente**. Modelos dim96-L4 y dim192-L6 (5× capacidad) llegan a PPL ~13 y aún generan "sopa de palabras": con vocab=256 cada token lleva demasiado poco contenido y el modelo gasta capacidad en sintaxis byte-level. BPE 2-4k tokens + re-entreno → texto legible esperado. Requiere: vocab fijo de BPE al repo, corpus→ids, tok_emb/head 2048×dim.
 - [ ] **IndexedDB en la web**: persistir conversaciones + hechos del usuario del chat (el análogo web de `sesion.bin`), hoy la sesión muere al recargar.
 - [ ] **Export conversaciones → contrib**: además de pesos, los usuarios podrían contribuir sus conversaciones (con el mismo gate).
 - [ ] **int8 en formato ADM**: pesos cuantizados on-disk (2MB→0.5MB, 4× menos descarga); descuantizar on-load; entrena en FP32 (artículo Jalapeño, punto 4).
+
+## Experimentación 30-ago (verificación de comportamiento)
+
+| Modelo | Capacidad | Corpus | PPL | Generación |
+|---|---|---|---|---|
+| dim96 L4 | 0.55M | mixto (peng+FT+PB) | 13.27 | sopa de palabras |
+| dim192 L6 | 2.9M (5.2×) | idem | 13.27 | igual de incoherente |
+| dim96 L4 | 0.55M | alpaca pura | 13.49 | sopa + bigramas "the an" |
+| dim192 L6 | 2.9M | alpaca pura | 13.80 | igual |
+
+**Conclusión medida:** la capacidad NO era el cuello — 5× capacidad da la misma PPL y mismo nivel de incoherencia. El límite es el tokenizador byte-level (vocab 256). Pasar a BPE ~2k tokens es LA prioridad. PPL byte ~13 ≈ 4-5 bits/byte (cerca de compresión gzip del inglés ~3 bits); el modelo está comprimiendo razonable pero no puede formar patrones de palabra largos con 4 capas.
 
 ## Auto-ampliación (Net2Net) — la siguiente escala
 
