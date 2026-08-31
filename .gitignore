@@ -14,3 +14,4 @@ finetome.parquet
 adaptive/corpus_ft.bin
 hf_finetome.jsonl
 adaptive/hf_finetome.jsonl
+adaptive/train_bpe2.log
