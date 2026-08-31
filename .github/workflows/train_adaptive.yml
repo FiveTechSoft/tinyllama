@@ -87,20 +87,38 @@ jobs:
           [ -f corpus_pb_rot.bin ] && cat corpus_pb_rot.bin >> corpus_total.bin
           echo "corpus_total: $(stat -c%s corpus_total.bin) bytes"; ls -la corpus_*.bin
 
-      - name: Entrenar (gate de publicacion por PPL)
+      - name: Entrenar (gate de publicacion por PPL, union con checkpoint local)
         run: |
           cd adaptive
           echo "corpus:"; ls -la corpus_*.bin
-          # entrena 3 tandas incrementales; solo publica si mejora la PPL
+          # convierte corpus_total.bin (bytes) a ids BPE -> corpus_cycle_ids.bin
+          python3 -c "data = open('corpus_total.bin','rb').read(); import struct, sys; sys.path.insert(0,'../scripts'); from encode_corpora import load_vocab, encode_frag, arr_by_id; arr = load_vocab(); out=[]; frag=bytearray()
+          for b in data:
+              if b in (1,2,3):
+                  if frag: out.extend(encode_frag(bytes(frag), arr)); frag = bytearray()
+                  out.append(b)
+              else: frag.append(b)
+          if frag: out.extend(encode_frag(bytes(frag), arr))
+          open('corpus_cycle_ids.bin','wb').write(struct.pack('<I', len(out)))
+          open('corpus_cycle_ids.bin','ab').write(struct.pack(f'<{len(out)}I', *out))
+          print('ids:', len(out))
+          "
+          # PUNTO DE PARTIDA: el mas avanzado entre model.adm (nube) y
+          # checkpoint.chk (local, subido por watcher): comparo train_steps
+          PUNTO="model.adm"
+          if [ -f checkpoint.chk ] && [ ! -f model.adm ]; then
+            PUNTO="checkpoint.chk"
+          elif [ -f checkpoint.chk ] && [ -f model.adm ] && [ $(stat -c%s ../checkpoint.chk) -gt $(stat -c%s model.adm) ]; then
+            PUNTO="checkpoint.chk"   # el chk mas grande => mas entrenado (heuristica)
+          fi
+          echo "punto de partida: $PUNTO"
+          # entrena 3 tandas; resume automatico via checkpoint.chk del ciclo
           for ciclo in 1 2 3; do
-            if [ -f model.adm ]; then
-              ./train --model model.adm --data corpus_total.bin \
-                --val corpus_total.bin --steps 3000 --batch 8 --ctx 96 \
-                --eval 60 --out model.adm || true
-            else
-              ./train --fresh 96,4,4 --data corpus_total.bin \
-                --val corpus_total.bin --steps 3000 --batch 8 --ctx 96 || true
-            fi
+            ./train --model "$PUNTO" --data corpus_cycle_ids.bin \
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 \
+              --eval 60 --out model.adm --vocab 2048 || \
+            ./train --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 || true
           done
           cat metrics.csv 2>/dev/null | tail -5
 
