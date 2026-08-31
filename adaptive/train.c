@@ -173,17 +173,22 @@ static double train_chunk(int steps, int batch, float lr, int total_steps) {
                         * (double)(g_train_len - (size_t)bT - 1));
             avg += win_fwd_bwd(&M, g_train + st, bT, 1);
         }
-        /* LR efectivo: warmup lineal (10% del total) + cosine annealing */
+        /* LR efectivo: WSD (Warmup-Stable-Decay) o cosine
+         * WSD (PuRo-2B 3.3.2): warmup 10%, estable al LR base hasta 80%,
+         * decae lineal a ~0 el 20% final. Ventana: resumir en cualquier
+         * punto estable sin valle de cosine */
         float lr_now = lr;
         if (total_steps > 0) {
             int t = g_adam_t, T = total_steps;
-            if (t < T / 10) {
-                lr_now = lr * (float)(t + 1) / (float)(T / 10);
-            } else {
-                float prog = (float)(t - T / 10) / (float)(T - T / 10);
+            int warm = T / 10, decay = T / 5;   /* 10% warmup, 20% decay */
+            if (t < warm) {
+                lr_now = lr * (float)(t + 1) / (float)warm;
+            } else if (t >= T - decay) {
+                float prog = (float)(t - (T - decay)) / (float)decay;
                 if (prog > 1.f) prog = 1.f;
-                lr_now = lr * 0.5f * (1.0f + cosf(3.14159265f * prog));
+                lr_now = lr * (1.0f - 0.95f * prog);   /* decae a 5% del base */
             }
+            /* entre warm y T-decay: LR estable = lr (WSD) */
         }
         /* clipping: norma L2 global del gradiente (recorta si > 1.0) */
         for (size_t i = 0; i < g_nfloats; i++)
@@ -589,7 +594,4 @@ int ad_live_save(uint8_t *out, int out_max) {
     return (int)need;
 }
 #endif
-
-
-
 
