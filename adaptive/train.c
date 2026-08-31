@@ -75,6 +75,9 @@ static int *g_train = NULL, *g_val = NULL;
 static size_t   g_train_len = 0, g_val_len = 0;
 static int      g_adam_t = 0;
 static size_t   g_nfloats = 0;
+static int      g_opt_muon = 0;          /* --opt muon (PuRo 3.3) */
+static float   *AMM = NULL;              /* momentum Muon (espejo de arena) */
+static size_t   AMM_cap = 0;
 
 static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd);
 
@@ -143,7 +146,8 @@ static int train_setup(void) {
     GRAD = (float *)calloc(g_nfloats, sizeof(float));
     ADM  = (float *)calloc(g_nfloats, sizeof(float));
     ADV  = (float *)calloc(g_nfloats, sizeof(float));
-    if (!GRAD || !ADM || !ADV) return -2;
+    if (g_opt_muon) AMM = (float *)calloc(g_nfloats, sizeof(float));
+    if (!GRAD || !ADM || !ADV || (g_opt_muon && !AMM)) return -2;
     return 0;
 }
 
@@ -200,13 +204,105 @@ static double train_chunk(int steps, int batch, float lr, int total_steps) {
         g_adam_t++;
         float bc1 = 1.0f - powf(0.9f, (float)g_adam_t);
         float bc2 = 1.0f - powf(0.999f, (float)g_adam_t);
-        for (size_t i = 0; i < g_nfloats; i++) {
-            float gi = (GRAD[i] / (float)batch) * scale;
-            ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
-            ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
-            M.w[i] -= lr_now * (ADM[i] / bc1)
-                    / (sqrtf(ADV[i] / bc2) + 1e-8f);
-            GRAD[i] = 0.f;
+        if (!g_opt_muon) {
+            /* AdamW clasico para todos los tensores */
+            for (size_t i = 0; i < g_nfloats; i++) {
+                float gi = (GRAD[i] / (float)batch) * scale;
+                ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
+                ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
+                M.w[i] -= lr_now * (ADM[i] / bc1)
+                        / (sqrtf(ADV[i] / bc2) + 1e-8f);
+                GRAD[i] = 0.f;
+            }
+        } else {
+            /* MuonH (PuRo 3.3): matrices 2D por bloque = MuonH,
+             * emb/pos/ln/biases/head = AdamW (LR base); matrices con
+             * LR = 10x base. Se aplica por tensor con el layout. */
+            size_t V = (size_t)(M.cfg.vocab > 0 ? M.cfg.vocab : 256);
+            size_t d = (size_t)M.cfg.dim, hid = (size_t)M.cfg.hidden;
+            /* 1) tensores AdamW globales: tok_emb y head (grandes/V-vocab) */
+            for (size_t i = 0; i < V * d; i++) {
+                size_t gb = M.lay.tok_emb + i;
+                float gi = (GRAD[gb] / (float)batch) * scale;
+                ADM[gb] = 0.9f * ADM[gb] + 0.1f * gi;
+                ADV[gb] = 0.999f * ADV[gb] + 0.001f * gi * gi;
+                M.w[gb] -= lr_now * (ADM[gb] / bc1)
+                        / (sqrtf(ADV[gb] / bc2) + 1e-8f);
+                GRAD[gb] = 0.f;
+                gb = M.lay.w_head + i;   /* head igual */
+                gi = (GRAD[gb] / (float)batch) * scale;
+                ADM[gb] = 0.9f * ADM[gb] + 0.1f * gi;
+                ADV[gb] = 0.999f * ADV[gb] + 0.001f * gi * gi;
+                M.w[gb] -= lr_now * (ADM[gb] / bc1)
+                        / (sqrtf(ADV[gb] / bc2) + 1e-8f);
+                GRAD[gb] = 0.f;
+            }
+            /* pos_emb: AdamW (es 1D-like vectorial: [seq x dim]) */
+            for (size_t i = 0; i < (size_t)M.cfg.max_seq * d; i++) {
+                size_t gb = M.lay.pos_emb + i;
+                float gi = (GRAD[gb] / (float)batch) * scale;
+                ADM[gb] = 0.9f * ADM[gb] + 0.1f * gi;
+                ADV[gb] = 0.999f * ADV[gb] + 0.001f * gi * gi;
+                M.w[gb] -= lr_now * (ADM[gb] / bc1)
+                        / (sqrtf(ADV[gb] / bc2) + 1e-8f);
+                GRAD[gb] = 0.f;
+            }
+            /* LNs y tail: AdamW */
+            size_t lnfg_lo = M.lay.lnf_g, ln_end = M.lay.b_head;
+            for (size_t i = lnfg_lo; i < ln_end && i < g_nfloats; i++) {
+                float gi = (GRAD[i] / (float)batch) * scale;
+                ADM[i] = 0.9f * ADM[i] + 0.1f * gi;
+                ADV[i] = 0.999f * ADV[i] + 0.001f * gi * gi;
+                M.w[i] -= lr_now * (ADM[i] / bc1)
+                        / (sqrtf(ADV[i] / bc2) + 1e-8f);
+                GRAD[i] = 0.f;
+            }
+            /* por capa: MuonH sobre Wqkv Wproj W1 W2; resto AdamW */
+            float lrH = lr_now * 10.0f;
+            size_t dim = d;
+            for (int l = 0; l < M.cfg.n_layers; l++) {
+                size_t lb = M.lay.layers + (size_t)l * M.lay.per_layer;
+                /* adam: ln1g ln1b bqkv bproj ln2g ln2b b1 b2 */
+                size_t adam_offs[] = { lb, lb + (size_t)dim,
+                    lb + 2*(size_t)dim + (size_t)dim*3*dim,
+                    lb + 2*(size_t)dim + (size_t)dim*3*dim + 3*(size_t)dim + (size_t)dim*(size_t)dim,
+                };
+                for (int oi = 0; oi < 4; oi++) {
+                    size_t gb = adam_offs[oi];
+                    size_t len = (oi == 0 || oi == 1) ? (size_t)dim
+                               : (oi == 2) ? 3*(size_t)dim : (size_t)dim;
+                    for (size_t i = 0; i < len; i++) {
+                        size_t idx = gb + i >= g_nfloats ? 0 : gb + i;
+                        float gi = (GRAD[(int)idx] / (float)batch) * scale;
+                        ADM[idx] = 0.9f*ADM[idx] + 0.1f*gi;
+                        ADV[idx] = 0.999f*ADV[idx] + 0.001f*gi*gi;
+                        M.w[idx] -= lr_now * (ADM[idx]/bc1)
+                                / (sqrtf(ADV[idx]/bc2) + 1e-8f);
+                        GRAD[idx] = 0.f;
+                    }
+                }
+                /* MuonH en las 4 matrices del bloque (con momentum dedicados
+                 * en buf_adam[matriz] via ADM si existe el espejo) */
+                /* Wqkv [dim x 3dim] */
+                ad_muon_apply(M.w + lb + 2*(size_t)dim,
+                              GRAD + lb + 2*(size_t)dim,
+                              AMM + lb + 2*(size_t)dim,
+                              dim, 3*dim, lrH);
+                memset(GRAD + lb + 2*(size_t)dim, 0,
+                       (size_t)dim*3*dim*sizeof(float));
+                /* Wproj [dim x dim]*/
+                size_t wo = lb + 2*(size_t)dim + (size_t)dim*3*dim + 3*(size_t)dim;
+                ad_muon_apply(M.w + wo, GRAD + wo, AMM + wo, dim, dim, lrH);
+                memset(GRAD + wo, 0, (size_t)dim*(size_t)dim*sizeof(float));
+                /* W1 [dim x hid] */
+                size_t w1o = wo + (size_t)dim*(size_t)dim + (size_t)dim;
+                ad_muon_apply(M.w + w1o, GRAD + w1o, AMM + w1o, dim, (int)hid, lrH);
+                memset(GRAD + w1o, 0, (size_t)dim*(size_t)hid*sizeof(float));
+                /* W2 [hid x dim] */
+                size_t w2o = w1o + (size_t)dim*(size_t)hid + (size_t)hid;
+                ad_muon_apply(M.w + w2o, GRAD + w2o, AMM + w2o, (int)hid, dim, lrH);
+                memset(GRAD + w2o, 0, (size_t)hid*(size_t)dim*sizeof(float));
+            }
         }
         total += avg / batch;
     }
@@ -241,6 +337,8 @@ int main(int argc, char **argv) {
             OPT_EVAL = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--vocab") && i + 1 < argc) {
             OPT_VOCAB = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--opt") && i + 1 < argc) {
+            if (!strcmp(argv[++i], "muon")) g_opt_muon = 1;
         }
     }
     if (!data_path || (!fresh_d && !model_in)) {
@@ -594,4 +692,9 @@ int ad_live_save(uint8_t *out, int out_max) {
     return (int)need;
 }
 #endif
+
+
+
+
+
 

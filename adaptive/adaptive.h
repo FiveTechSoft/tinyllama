@@ -83,4 +83,8 @@ void  ad_gelu_bwd(float *dx, const float *pre, int n);
 float ad_randf(void);
 float ad_gauss(void);
 
+/* MuonH optimizer (ad_muon.c) */
+void ad_muon_apply(float *W, float *G, float *M, int R, int C, float lr);
+int  ad_muon_test(void);
+
 #endif
