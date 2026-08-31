@@ -113,12 +113,12 @@ jobs:
           fi
           echo "punto de partida: $PUNTO"
           # entrena 3 tandas; resume automatico via checkpoint.chk del ciclo
-          for ciclo in 1 2; do
+          for ciclo in 1 2 3; do
             ./train --model "$PUNTO" --data corpus_cycle_ids.bin \
-              --val corpus_cycle_ids.bin --steps 2000 --batch 8 --ctx 96 \
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 \
               --eval 60 --out model.adm --vocab 2048 || \
             ./train --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
-              --val corpus_cycle_ids.bin --steps 2000 --batch 8 --ctx 96 || true
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 || true
           done
           cat metrics.csv 2>/dev/null | tail -5
 
