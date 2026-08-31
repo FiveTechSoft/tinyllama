@@ -13,9 +13,31 @@ static int    OPT_STEPS = 2000;
 static int    OPT_T     = 96;
 static float  OPT_LR    = 3e-4f;
 static int    OPT_EVAL  = 100;
+static int    OPT_VOCAB = 256;      /* 2048 => modo BPE */
 static int    OPT_BATCH = 8;
 
 static uint8_t *read_file(const char *path, size_t *len);
+/* lee corpus BAR1 (u32 ids) o bytes crudos (id=byte); malloc result, n por puntero */
+static int *read_tokens(const char *path, size_t *n) {
+    size_t len = 0;
+    uint8_t *raw = read_file(path, &len);
+    if (!raw) return NULL;
+    int *toks;
+    if (len >= 8 && raw[0]=='B' && raw[1]=='A' && raw[2]=='R' && raw[3]=='1') {
+        uint32_t n4;
+        memcpy(&n4, raw + 4, 4);
+        toks = (int *)malloc((size_t)n4 * sizeof(int));
+        memcpy(toks, raw + 8, (size_t)n4 * sizeof(int));
+        free(raw);
+        *n = n4;
+    } else {
+        toks = (int *)malloc(len * sizeof(int));
+        for (size_t i = 0; i < len; i++) toks[i] = raw[i];
+        free(raw);
+        *n = len;
+    }
+    return toks;
+}
 
 /* ==================================================================
  *  FORWARD + BACKWARD de una ventana de T bytes
@@ -23,7 +45,7 @@ static uint8_t *read_file(const char *path, size_t *len);
  *  acumula gradientes en GRAD (arena espejo de M.w)
  *  devuelve CE media por prediccion (T-1)
  * ================================================================== */
-static float win_fwd_bwd(AdModel *m, const uint8_t *bytes, int T, int do_bwd);
+static float win_fwd_bwd(AdModel *m, const int *bytes, int T, int do_bwd);
 
 static void *xmalloc(size_t n) {
     void *p = malloc(n);
@@ -49,12 +71,12 @@ static uint8_t *read_file(const char *path, size_t *len) {
 /* contexto global del entrenamiento (main usa esto; WASM lo setea directo) */
 static AdModel M;               /* modelo en entrenamiento */
 static float  *GRAD, *ADM, *ADV;/* gradientes + moments Adam */
-static uint8_t *g_train = NULL, *g_val = NULL;
+static int *g_train = NULL, *g_val = NULL;
 static size_t   g_train_len = 0, g_val_len = 0;
 static int      g_adam_t = 0;
 static size_t   g_nfloats = 0;
 
-static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd);
+static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd);
 
 /* gradiente de pesos de un linear: dW[r,c] += dy[r] * x[c] */
 static void gWadd(float *dW, const float *dy, const float *x, int R, int C) {
@@ -126,7 +148,7 @@ static int train_setup(void) {
 }
 
 /* ---- eval: PPL media sobre el corpus val en ventanas aleatorias ---- */
-static double eval_ppl_val(const uint8_t *val, size_t val_len, int n_win) {
+static double eval_ppl_val(const int *val, size_t val_len, int n_win) {
     if (val_len < (size_t)bT + 2) return 0.0;
     double tot = 0.0;
     for (int w = 0; w < n_win; w++) {
@@ -212,33 +234,37 @@ int main(int argc, char **argv) {
             OPT_BATCH = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--eval") && i + 1 < argc) {
             OPT_EVAL = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--vocab") && i + 1 < argc) {
+            OPT_VOCAB = atoi(argv[++i]);
         }
     }
     if (!data_path || (!fresh_d && !model_in)) {
         fprintf(stderr,
             "uso: train --data corpus.bin (--fresh dim,H,L | --model m.adm)"
             " [--out model.adm] [--steps N] [--batch B] [--ctx T] [--lr F]"
-            " --val val.bin\n");
+            " [--vocab 2048] --val val.bin\n");
         return 1;
     }
 
     /* ---- cargar o crear modelo ---- */
     srand((unsigned)time(NULL));
     if (fresh_d > 0) {
-        if (ad_init_fresh(&M, fresh_d, fresh_l, fresh_h, OPT_T * 2)) {
+        if (ad_init_fresh_v(&M, fresh_d, fresh_h, fresh_l, OPT_T * 2, OPT_VOCAB)) {
             fprintf(stderr, "no se pudo crear modelo fresh\n");
             return 2;
         }
-        printf("modelo fresco: dim=%d L=%d H=%d\n", M.cfg.dim, fresh_l, fresh_h);
+        printf("modelo fresco: dim=%d L=%d H=%d vocab=%d\n",
+               M.cfg.dim, fresh_h, fresh_l, M.cfg.vocab);
     } else {
         int r = ad_load(&M, model_in);
         if (r) { fprintf(stderr, "load %s -> %d\n", model_in, r); return 2; }
-        printf("modelo cargado: steps=%u\n", M.cfg.train_steps);
+        printf("modelo cargado: steps=%u vocab=%d\n",
+               M.cfg.train_steps, M.cfg.vocab);
     }
 
     /* ---- corpus (a globals; tambien los consume train_chunk) ---- */
-    g_train = read_file(data_path, &g_train_len);
-    g_val = val_path ? read_file(val_path, &g_val_len) : NULL;
+    g_train = read_tokens(data_path, &g_train_len);
+    g_val = val_path ? read_tokens(val_path, &g_val_len) : NULL;
     /* BARI corpus (ids u32): convierte a in-place bytes (id<256: byte; id>=256
      * expande a su secuencia de bytes via vocab del corpus? no - byte-level
      * fallback: los ids >=256 NO caben en byte => modo ids no soportado aqui */
@@ -316,7 +342,7 @@ int main(int argc, char **argv) {
  *  layout del archivo: tok_emb, pos_emb, por capa {ln1g ln1b Wqkv bqkv
  *  Wproj bproj ln2g ln2b W1 b1 W2 b2}, tail {lnfg lnfb Whead bhead}
  * ================================================================== */
-static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
+static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd) {
     const int dim = m->cfg.dim, hd = m->cfg.head_dim, nh = m->cfg.n_heads;
     const int hid = m->cfg.hidden;
     const size_t d = (size_t)dim;
@@ -325,7 +351,7 @@ static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
 
     /* x[0][t] = tok_emb + pos_emb */
     for (int t = 0; t < T; t++) {
-        int id = bts[t] & 0xFF;
+        int id = bts[t] % (m->cfg.vocab > 0 ? m->cfg.vocab : 256);
         const float *te = WE + (size_t)id * bD;
         float *x0 = XROW(0, t);
         for (int i = 0; i < dim; i++)
@@ -432,7 +458,7 @@ static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
         for (int i = 1; i < AD_VOCAB; i++) if (lg[i] > mx) mx = lg[i];
         double s = 0.0;
         for (int i = 0; i < AD_VOCAB; i++) s += exp((double)lg[i] - mx);
-        int tgt = bts[t + 1] & 0xFF;
+        int tgt = bts[t + 1] % (m->cfg.vocab > 0 ? m->cfg.vocab : 256);
         ce += -((double)lg[tgt] - mx - log(s));
     }
     loss = (float)(ce / (T - 1));
@@ -451,7 +477,7 @@ static float win_fwd_bwd(AdModel *m, const uint8_t *bts, int T, int do_bwd) {
         for (int i = 0; i < AD_VOCAB; i++)
             s += exp((double)bLG[(size_t)t * AD_VOCAB + i] - mx);
         float inv_s = (float)(1.0 / s);
-        int tgt = bts[t + 1] & 0xFF;
+        int tgt = bts[t + 1] % (m->cfg.vocab > 0 ? m->cfg.vocab : 256);
         float *dlt = bDLG + (size_t)t * AD_VOCAB;
         for (int i = 0; i < AD_VOCAB; i++) {
             float pi = expf(bLG[(size_t)t * AD_VOCAB + i] - mx) * inv_s;
@@ -521,7 +547,7 @@ extern void *ad_global_model(void);   /* implementado abajo via helper */
 
 EMSCRIPTEN_KEEPALIVE
 int ad_live_start_from_loaded(int corpus_len, const uint8_t *corpus, int ctx) {
-    /* g_m es el modelo residente que cargó ad_load_mem: lo localizamos
+    /* g_m es el modelo residente que carg?? ad_load_mem: lo localizamos
      * re-exportando sus bytes via ad_live_save-like. Simplificacion:
      * train.c NO toca g_m; el worker pasa el buffer del modelo original.
      * => esta funcion NO se usa; el worker llama ad_live_start con el
@@ -563,3 +589,7 @@ int ad_live_save(uint8_t *out, int out_max) {
     return (int)need;
 }
 #endif
+
+
+
+

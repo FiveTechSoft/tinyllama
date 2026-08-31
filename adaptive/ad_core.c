@@ -239,7 +239,7 @@ int ad_save(AdModel *m, const char *path) {
     put_u32(f, (uint32_t)m->cfg.hidden);
     put_u32(f, (uint32_t)m->cfg.max_seq);
     put_u32(f, m->cfg.train_steps);
-    put_u32(f, m->cfg.flags);
+    put_u32(f, ((uint32_t)m->cfg.vocab << 16) | (m->cfg.flags & 0xFFFF));
     fwrite(m->w, sizeof(float), m->lay.total, f);
     fclose(f);
     return 0;
@@ -255,7 +255,10 @@ int ad_load(AdModel *m, const char *path) {
     AdConfig c;
     c.dim = (int)v[2]; c.n_layers = (int)v[3]; c.n_heads = (int)v[4];
     c.hidden = (int)v[5]; c.max_seq = (int)v[6];
-    c.train_steps = v[7]; c.flags = 0;
+    c.train_steps = v[7]; c.flags = v[8] & 0xFFFF;
+    c.vocab = (int)(v[8] >> 16); if (c.vocab == 0) c.vocab = 256;
+    /* vocab: BPE flag v2+ (version 2 guarda vocab en bits altos de flags);
+     * fallback default byte-level */
     if (c.dim <= 0 || c.n_heads <= 0 || c.dim % c.n_heads) { fclose(f); return -16; }
     if (c.n_layers < 1 || c.n_layers > AD_MAX_LAYERS) { fclose(f); return -17; }
     if (c.max_seq < 2 || c.max_seq > AD_MAX_SEQ) { fclose(f); return -18; }
@@ -305,7 +308,7 @@ void ad_forward(AdModel *m) {
 
     const float *tok_emb = m->w + m->lay.tok_emb;
     float *x = s_x;
-    int id = m->tokens[t] & 0xFF;
+    int id = m->tokens[t] % (m->cfg.vocab > 0 ? m->cfg.vocab : 256);
     for (int i = 0; i < dim; i++)
         x[i] = tok_emb[(size_t)id * d + i] + m->w[m->lay.pos_emb + (size_t)t * d + i];
 
@@ -417,22 +420,30 @@ int ad_step(AdModel *m, float temp, int top_k) {
     for (size_t i = 0; i < V; i++) s_p[i] /= sum;
 
     for (size_t i = 0; i < V; i++) s_idx[i] = (int)i;
-    for (size_t i = 1; i < V; i++) {                /* insertion sort desc */
+    for (size_t i = 1; i < V; i++) {
         int idv = s_idx[i];
-        size_t j = i - 1;
+        int j = (int)i - 1;
         while (j >= 0 && s_p[s_idx[j]] < s_p[idv]) { s_idx[j+1] = s_idx[j]; j--; }
         s_idx[j+1] = idv;
     }
     if (top_k <= 0 || top_k > (int)V) top_k = (int)V;
-    float acc = 0.f;
-    for (int i = 0; i < top_k; i++) acc += s_p[s_idx[i]];
-    float r = ad_randf() * acc;
-    int next = s_idx[top_k - 1];
-    for (int i = 0; i < top_k; i++) {
-        r -= s_p[s_idx[i]];
-        if (r <= 0.f) { next = s_idx[i]; break; }
+
+    /* resampling: los controles (0,1,2,3) quedan banned en generacion:
+     * se re-samplea hasta elegir un token de texto (max 8 intentos) */
+    int next = -1;
+    for (int tries = 0; tries < 8; tries++) {
+        float acc = 0.f;
+        for (int i = 0; i < top_k; i++) acc += s_p[s_idx[i]];
+        float r = ad_randf() * acc;
+        next = s_idx[top_k - 1];
+        for (int i = 0; i < top_k; i++) {
+            r -= s_p[s_idx[i]];
+            if (r <= 0.f) { next = s_idx[i]; break; }
+        }
+        if (next > 3) break;   /* token de texto valido */
+        next = -1;
     }
-    if (next == AD_CTL_EOS || next == AD_CTL_USER) return -1;
+    if (next < 0) return -1;
     m->tokens[m->n_tok++] = next;
     ad_forward(m);
     return next;
@@ -456,6 +467,7 @@ int ad_load_from(AdModel *m, const uint8_t *buf, int size) {
     m->cfg.max_seq = (int)v[6];
     m->cfg.train_steps = v[7];
     m->cfg.flags = v[8];
+    m->cfg.vocab = (int)(m->cfg.flags >> 16); if (m->cfg.vocab == 0) m->cfg.vocab = 256;
     if (m->cfg.dim <= 0 || m->cfg.n_heads <= 0 || m->cfg.dim % m->cfg.n_heads)
         return -3;
     if (m->cfg.n_layers < 1 || m->cfg.n_layers > AD_MAX_LAYERS) return -4;
@@ -543,4 +555,11 @@ int ad_generate_n(const char *prompt, int max_tokens, float temp, int top_k,
     return n;
 }
 #endif
+
+
+
+
+
+
+
 

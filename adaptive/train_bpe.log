@@ -1,0 +1,66 @@
+modelo fresco: dim=192 L=6 H=6 vocab=2048
+b2: modelo+corpus+buffers OK (train=30523204 val=30523204)
+PPL inicial: 258.48
+step 100/6000  loss=5.4438
+step 200/6000  loss=4.7974
+step 300/6000  loss=3.7169
+step 400/6000  loss=2.8285
+step 500/6000  loss=2.4026
+step 600/6000  loss=2.2195
+step 700/6000  loss=2.0867
+step 800/6000  loss=2.0371
+step 900/6000  loss=1.9878
+step 1000/6000  loss=1.9559
+step 1100/6000  loss=1.9365
+step 1200/6000  loss=1.9081
+step 1300/6000  loss=1.9019
+step 1400/6000  loss=1.8898
+step 1500/6000  loss=1.8740
+step 1600/6000  loss=1.8572
+step 1700/6000  loss=1.8575
+step 1800/6000  loss=1.8484
+step 1900/6000  loss=1.8398
+step 2000/6000  loss=1.8381
+step 2100/6000  loss=1.8370
+step 2200/6000  loss=1.8242
+step 2300/6000  loss=1.8240
+step 2400/6000  loss=1.8204
+step 2500/6000  loss=1.8152
+step 2600/6000  loss=1.8124
+step 2700/6000  loss=1.8116
+step 2800/6000  loss=1.8020
+step 2900/6000  loss=1.8010
+step 3000/6000  loss=1.7904
+step 3100/6000  loss=1.7863
+step 3200/6000  loss=1.7973
+step 3300/6000  loss=1.7878
+step 3400/6000  loss=1.7858
+step 3500/6000  loss=1.7827
+step 3600/6000  loss=1.7888
+step 3700/6000  loss=1.7762
+step 3800/6000  loss=1.7812
+step 3900/6000  loss=1.7756
+step 4000/6000  loss=1.7836
+step 4100/6000  loss=1.7770
+step 4200/6000  loss=1.7701
+step 4300/6000  loss=1.7709
+step 4400/6000  loss=1.7705
+step 4500/6000  loss=1.7700
+step 4600/6000  loss=1.7826
+step 4700/6000  loss=1.7705
+step 4800/6000  loss=1.7671
+step 4900/6000  loss=1.7682
+step 5000/6000  loss=1.7716
+step 5100/6000  loss=1.7648
+step 5200/6000  loss=1.7697
+step 5300/6000  loss=1.7709
+step 5400/6000  loss=1.7757
+step 5500/6000  loss=1.7720
+step 5600/6000  loss=1.7717
+step 5700/6000  loss=1.7695
+step 5800/6000  loss=1.7749
+step 5900/6000  loss=1.7712
+step 6000/6000  loss=1.7657
+PPL final: 5.90 (antes 258.48)
+PUBLICADO: C:\tinyllama\adaptive\model_bpe.adm (mejora 258.48 -> 5.90)
+listo (23178.9s)

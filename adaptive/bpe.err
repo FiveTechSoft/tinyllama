@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "C:\tinyllama\scripts\bpe_learn.py", line 88, in <module>
+    save_vocab(merges, r"C:\tinyllama\adaptive\vocab.bpe")
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\tinyllama\scripts\bpe_learn.py", line 71, in save_vocab
+    sa = tok_str(a, merges)
+  File "C:\tinyllama\scripts\bpe_learn.py", line 79, in tok_str
+    a, b = merges[tid - 256]
+           ~~~~~~^^^^^^^^^^^
+IndexError: list index out of range

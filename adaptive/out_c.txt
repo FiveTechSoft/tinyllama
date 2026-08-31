@@ -1,0 +1,4 @@
+chat BPE v1 | dim=192 L=6 vocab=2048 | /salir
+> 
+
+> 
