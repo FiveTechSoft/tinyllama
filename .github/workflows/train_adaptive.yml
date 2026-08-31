@@ -112,14 +112,21 @@ jobs:
             PUNTO="checkpoint.chk"   # el chk mas grande => mas entrenado (heuristica)
           fi
           echo "punto de partida: $PUNTO"
-          # entrena 3 tandas; resume automatico via checkpoint.chk del ciclo
+          # entrena 3 tandas; checkpoint por tanda; CMA promedia al final
           for ciclo in 1 2 3; do
             ./train --model "$PUNTO" --data corpus_cycle_ids.bin \
               --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 \
-              --eval 60 --out model.adm --vocab 2048 || \
+              --eval 60 --out "tanda${ciclo}.adm" --vocab 2048 || \
             ./train --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
               --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 || true
+            PUNTO="tanda${ciclo}.adm"
           done
+          # CMA (PuRo 3.4): promedia las 3 tandas -> model.adm, gate por PPL
+          if [ -f tanda1.adm ] && [ -f tanda2.adm ] && [ -f tanda3.adm ]; then
+            gcc -O2 -o cma cma.c ad_core.c 2>/dev/null
+            ./cma model_cma.adm tanda1.adm tanda2.adm tanda3.adm
+            ./cma model.adm model_cma.adm || cp model_cma.adm model.adm
+          fi
           cat metrics.csv 2>/dev/null | tail -5
 
       - name: Commit modelo + metricas
