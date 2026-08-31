@@ -95,11 +95,11 @@ jobs:
           for ciclo in 1 2 3; do
             if [ -f model.adm ]; then
               ./train --model model.adm --data corpus_total.bin \
-                --val corpus_total.bin --steps 1500 --batch 8 --ctx 96 \
+                --val corpus_total.bin --steps 3000 --batch 8 --ctx 96 \
                 --eval 60 --out model.adm || true
             else
               ./train --fresh 96,4,4 --data corpus_total.bin \
-                --val corpus_total.bin --steps 1500 --batch 8 --ctx 96 || true
+                --val corpus_total.bin --steps 3000 --batch 8 --ctx 96 || true
             fi
           done
           cat metrics.csv 2>/dev/null | tail -5
