@@ -4,11 +4,16 @@ name: Adaptive train
 # publicar solo si la PPL de validacion mejora. Varias veces al dia.
 on:
   schedule:
-    # 4 ciclos diarios (UTC): 01:23, 07:23, 13:23, 19:23
-    - cron: "23 1 * * *"
-    - cron: "23 7 * * *"
-    - cron: "23 13 * * *"
-    - cron: "23 19 * * *"
+      # 8 ciclos/dia: cada 3h (dentro de los terminos de uso de Actions:
+    # entrenamiento = desarrollo del proyecto, carga proporcional al beneficio)
+    - cron: "18 0 * * *"
+    - cron: "18 3 * * *"
+    - cron: "18 6 * * *"
+    - cron: "18 9 * * *"
+    - cron: "18 12 * * *"
+    - cron: "18 15 * * *"
+    - cron: "18 18 * * *"
+    - cron: "18 21 * * *"
   workflow_dispatch:
     inputs:
       steps:
