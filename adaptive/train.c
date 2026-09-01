@@ -576,7 +576,9 @@ static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd) {
         }
     }
 
-    /* LN final + head -> logits[t] predice bytes[t+1] */
+    /* LN final + head -> logits[t] predice bytes[t+1]
+     * FASE D parcial: el head es la GEMM mas grande [T x dim]@[dim x V]
+     * (V=2048 en BPE): una sola GEMM en GPU cuando esta disponible */
     const float *lfg = m->w + m->lay.lnf_g;
     const float *lfb = m->w + m->lay.lnf_b;
     const float *Wh  = m->w + m->lay.w_head;
@@ -585,10 +587,17 @@ static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd) {
     for (int t = 0; t < T; t++) {
         float ml, sl;
         ln_fwd(bLF + (size_t)t * bD, x_last + (size_t)t * bD, lfg, lfb, dim, &ml, &sl);
-        ad_matmul(bLG + (size_t)t * AD_VOCAB, Wh,
-                  bLF + (size_t)t * bD, AD_VOCAB, dim);
-        for (int i = 0; i < AD_VOCAB; i++)
-            bLG[(size_t)t * AD_VOCAB + i] += bh[i];
+    }
+    if (ad_gpub_ok()) {
+        /* GEMM batch en GPU: [T x dim] @ Whead^T + bh  (Whead es [V x dim]) */
+        ad_gpub_lin(bLG, bLF, Wh, bh, T, dim, AD_VOCAB);
+    } else {
+        for (int t = 0; t < T; t++) {
+            ad_matmul(bLG + (size_t)t * AD_VOCAB, Wh,
+                      bLF + (size_t)t * bD, AD_VOCAB, dim);
+            for (int i = 0; i < AD_VOCAB; i++)
+                bLG[(size_t)t * AD_VOCAB + i] += bh[i];
+        }
     }
 
     /* ---- loss: CE de logits[t] -> byte target = bytes[t+1] ---- */

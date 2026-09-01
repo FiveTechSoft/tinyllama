@@ -38,6 +38,8 @@ Razon: MuonH arranca con momentum vacio sobre un modelo ya calentado con Adam. L
 - [ ] **IndexedDB en la web**: persistir conversaciones + hechos del usuario del chat (el análogo web de `sesion.bin`), hoy la sesión muere al recargar.
 - [ ] **Export conversaciones → contrib**: además de pesos, los usuarios podrían contribuir sus conversaciones (con el mismo gate).
 - [ ] **int8 en formato ADM**: pesos cuantizados on-disk (2MB→0.5MB, 4× menos descarga); descuantizar on-load; entrena en FP32 (artículo Jalapeño, punto 4).
+- [ ] **GPU residency (FASE E)**: pesos+gradientes residentes en VRAM, solo logits/loss por step. **Lección medida**: ad_gpub_lin con transfers PCIe por GEMM es 3× MÁS LENTO que CPU (11.6s/step vs 4s) — el overhead PCIe domina con matrices pequeñas. El speedup 20-50× exige el patrón residencial completo (pesos en VRAM una vez, todo el forward/backward/Adam en device, bajar solo métricas). Base hecha: cuBLAS verificado en RTX 3060, gpub_lin exacta, gpub_bwd dIN exacto. Pendiente: reescribir win_fwd_bwd+Adam para VRAM residency.
+- [ ] **rohanmistry231 repo al mezclador** (los 7 PDFs didácticos)
 
 ## Experimentación 30-ago (verificación de comportamiento)
 

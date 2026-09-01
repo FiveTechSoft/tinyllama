@@ -91,6 +91,15 @@ float ad_gauss(void);
 void ad_muon_apply(float *W, float *G, float *M, int R, int C, float lr);
 int  ad_muon_test(void);
 
+/* backend GPU (ad_gpub.c): declarado siempre; la implementacion
+ * solo se linkea cuando se compila ad_gpub.c con CUDA. Sin ella,
+ * ad_gpub_ok() devuelve 0 y el trainer usa CPU */
+int  ad_gpub_init(void);
+int  ad_gpub_ok(void);
+void ad_gpub_free(void);
+int  ad_gpub_lin(float *out, const float *in, const float *W,
+                 const float *bias, int BT, int K, int N);
+
 #ifdef __cplusplus
 }
 #endif
