@@ -1,10 +1,10 @@
 """codifica TODOS los corpus a corpus_ids.bin (formato: u32 n + u32 ids[])
-con el encoder greedy python (validado roundtrip), использ vocab.bpe
+con el encoder greedy python (validado roundtrip), ?????????????? vocab.bpe
 tambien genera corpus_hf_ids, corpus_peng_ids, corpus_st_ids, corpus_ft_ids
 """
 import struct
 
-def load_vocab(path=r"C:\tinyllama\adaptive\vocab.bpe"):
+def load_vocab(path=r"adaptive\vocab.bpe"):
     toks = {}
     for l in open(path, encoding="utf-8").read().splitlines():
         p = l.split("\t")
@@ -41,10 +41,10 @@ def main():
     arr_by_id = dict(arr)
 
     jobs = [
-        (r"C:\tinyllama\adaptive\corpus_hf.bin", r"C:\tinyllama\adaptive\corpus_hf_ids.bin"),
-        (r"C:\tinyllama\adaptive\corpus_peng.bin", r"C:\tinyllama\adaptive\corpus_peng_ids.bin"),
-        (r"C:\tinyllama\adaptive\corpus_st.bin", r"C:\tinyllama\adaptive\corpus_st_ids.bin"),
-        (r"C:\tinyllama\adaptive\corpus_ft_small.bin", r"C:\tinyllama\adaptive\corpus_ft_ids.bin"),
+        (r"adaptive\corpus_hf.bin", r"adaptive\corpus_hf_ids.bin"),
+        (r"adaptive\corpus_peng.bin", r"adaptive\corpus_peng_ids.bin"),
+        (r"adaptive\corpus_st.bin", r"adaptive\corpus_st_ids.bin"),
+        (r"adaptive\corpus_ft_small.bin", r"adaptive\corpus_ft_ids.bin"),
     ]
     for src, dst in jobs:
         data = open(src, "rb").read()
@@ -69,3 +69,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
