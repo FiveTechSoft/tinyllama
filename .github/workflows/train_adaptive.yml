@@ -92,7 +92,7 @@ jobs:
           cd adaptive
           echo "corpus:"; ls -la corpus_*.bin
           # convierte corpus_total.bin (bytes) a ids BPE -> corpus_cycle_ids.bin
-          python3 -c "data = open('corpus_total.bin','rb').read(); import struct, sys; sys.path.insert(0,'../scripts'); from encode_corpora import load_vocab, encode_frag, arr_by_id; arr = load_vocab(); out=[]; frag=bytearray()
+          python3 -c "data = open('corpus_total.bin','rb').read(); import struct, sys; sys.path.insert(0,'../scripts'); import encode_corpora as ec; arr = ec.load_vocab(); ec.arr_by_id = dict(arr); encode_frag = ec.encode_frag; out=[]; frag=bytearray()
           for b in data:
               if b in (1,2,3):
                   if frag: out.extend(encode_frag(bytes(frag), arr)); frag = bytearray()
