@@ -71,7 +71,7 @@ int ad_gpub_bwd(float *dW, float *dIN, const float *dout, const float *in,
         }
     }
 
-    float alpha = 1.0f, beta = needDW ? 1.0f : 0.0f;   /* acumula si ya hay */
+    float alpha = 1.0f;
     if (needDW) {
         if (cudaMalloc(&dDW, sdw)) {
             cudaFree(dDOUT); cudaFree(dIN_H); if (dDIN) cudaFree(dDIN); return -1;
@@ -79,21 +79,47 @@ int ad_gpub_bwd(float *dW, float *dIN, const float *dout, const float *in,
         cudaMemcpy(dDW, dW, sdw, cudaMemcpyHostToDevice);
     }
 
-    float abeta = needDW ? 1.0f : 0.0f;
-    if (needDW) {
-        /* via gpub_lin VERIFICADA: dW[N x K] = dout_T[N x BT] @ in[BT x K]
-         * transponemos dout en host (chico: BT x N) y usamos ad_gpub_lin */
-        float *doutT = (float *)malloc((size_t)N * BT * sizeof(float));
-        for (int t = 0; t < BT; t++)
-            for (int n = 0; n < N; n++)
-                doutT[(size_t)n * BT + t] = dout[(size_t)t * N + n];
-        ad_gpub_lin(dW, doutT, in, NULL, N, BT, K);
-        free(doutT);
-    }
+    /* ================= dIN en GPU: dIN[BT,K] = dout[BT,N] @ W[N,K]
+     * (reusa el gemm VERIFICADO de ad_gpub_lin: out = in @ W^T
+     *  con 'in'=dout [BT,N] y 'W'=W [N,K] => out = dout @ W^T: no es lo mismo)
+     * => cublasSgemm directo con la convencion row-major verificada:
+     *    C_rm[BT,K] = dout_rm[BT,N] @ W_rm[N,K]
+     *    C_cm[K,BT] = W_cm[K,N]^T ... el truco del gpu_test:
+     *    gemm(OP_N, OP_N, K, BT, N, W_cm(ld=K), dout_cm(ld=N), C_cm(ld=K))
+     *    donde W_rm[N,K] == W_cm[K,N] con ld=K  (exacto)
+     *    y dout_rm[BT,N] == dout_cm[N,BT] con ld=N  (exacto)
+     *    C_cm[K,BT] == C_rm[BT,K] con ld=K  (exacto) */
     if (needDIN) {
-        /* via gpub_lin VERIFICADA: dIN[BT x K] = dout[BT x N] @ W[N x K]
-         * (W se pasa directo: [N x K] es el [K'=N, N'=K] del linear) */
-        ad_gpub_lin(dIN, dout, W, NULL, BT, N, K);
+        float *dWh = NULL, *dDIN = NULL;
+        if (cudaMalloc(&dWh, (size_t)N * K * 4) == 0 &&
+            cudaMalloc(&dDIN, (size_t)BT * K * 4) == 0) {
+            cudaMemcpy(dWh, W, (size_t)N * K * 4, cudaMemcpyHostToDevice);
+            float abeta = 0.0f;
+            cublasStatus_t st = cublasSgemm(bh, CUBLAS_OP_N, CUBLAS_OP_N,
+                                            K, BT, N, &alpha,
+                                            dWh, K, dDOUT, N,
+                                            &abeta, dDIN, K);
+            if (st == CUBLAS_STATUS_SUCCESS)
+                cudaMemcpy(dIN, dDIN, sin, cudaMemcpyDeviceToHost);
+            cudaFree(dWh);
+        }
+        if (dDIN) cudaFree(dDIN);
+    }
+
+    /* ================= dW en HOST: doutT @ in (fiable y barato)
+     * el buffer dout es pequeno (BT x N): la GEMM de dW en CPU evita
+     * la pelea con la convencion col-major para el layout [N x K]
+     * (FASE C-beta; el dW en GPU llega cuando el batch B > 64) */
+    if (needDW) {
+        memset(dW, 0, sdw);
+        for (int t = 0; t < BT; t++)
+            for (int n = 0; n < N; n++) {
+                float dvt = dout[(size_t)t * N + n];
+                if (dvt == 0.f) continue;
+                const float *ir = in + (size_t)t * K;
+                float *dw = dW + (size_t)n * K;
+                for (int k = 0; k < K; k++) dw[k] += dvt * ir[k];
+            }
     }
     cudaFree(dDOUT); cudaFree(dIN_H);
     return 0;

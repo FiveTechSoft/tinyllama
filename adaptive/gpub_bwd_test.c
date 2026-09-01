@@ -43,6 +43,8 @@ int main(void) {
     for (int i = 0; i < N * K; i++) errW += fabsf(dW_gpu[i] - dW_ref[i]);
     for (int i = 0; i < BT * K; i++) errIN += fabsf(dIN_gpu[i] - dIN_ref[i]);
     errW /= (N * K); errIN /= (BT * K);
+    printf("dW_gpu[0]=%g dW_ref[0]=%g | dIN_gpu[0]=%g dIN_ref[0]=%g\n",
+           dW_gpu[0], dW_ref[0], dIN_gpu[0], dIN_ref[0]);
     printf("err dW %.6f | err dIN %.6f => %s\n",
            errW, errIN, (errW < 0.01f && errIN < 0.01f) ? "OK" : "FALLO");
     return (errW < 0.01f && errIN < 0.01f) ? 0 : 1;
