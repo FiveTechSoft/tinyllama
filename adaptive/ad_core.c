@@ -426,24 +426,29 @@ int ad_step(AdModel *m, float temp, int top_k) {
         while (j >= 0 && s_p[s_idx[j]] < s_p[idv]) { s_idx[j+1] = s_idx[j]; j--; }
         s_idx[j+1] = idv;
     }
+    /* resampling robusto: filtra controles (0-3) y bytes < 32 (no-printables)
+     * del top-k ANTES de muestrear: construye lista filtrada y samplea de ella */
     if (top_k <= 0 || top_k > (int)V) top_k = (int)V;
-
-    /* resampling: los controles (0,1,2,3) quedan banned en generacion:
-     * se re-samplea hasta elegir un token de texto (max 8 intentos) */
-    int next = -1;
-    for (int tries = 0; tries < 8; tries++) {
-        float acc = 0.f;
-        for (int i = 0; i < top_k; i++) acc += s_p[s_idx[i]];
-        float r = ad_randf() * acc;
-        next = s_idx[top_k - 1];
-        for (int i = 0; i < top_k; i++) {
-            r -= s_p[s_idx[i]];
-            if (r <= 0.f) { next = s_idx[i]; break; }
-        }
-        if (next > 31) break;   /* token de texto valido */
-        next = -1;
+    /* construye lista filtrada de candidatos >31 y que no sean controles */
+    int filt[AD_VOCAB_MAX];
+    float fp[AD_VOCAB_MAX];
+    int nf = 0;
+    for (int i = 0; i < top_k && nf < AD_VOCAB_MAX; i++) {
+        int id = s_idx[i];
+        if (id < 32) continue;          /* controles + no-printables fuera */
+        filt[nf] = id;
+        fp[nf] = s_p[id];
+        nf++;
     }
-    if (next < 0) return -1;
+    if (nf == 0) return -1;             /* todo el top-k eran controles */
+    float acc = 0.f;
+    for (int i = 0; i < nf; i++) acc += fp[i];
+    float r = ad_randf() * acc;
+    int next = filt[nf - 1];
+    for (int i = 0; i < nf; i++) {
+        r -= fp[i];
+        if (r <= 0.f) { next = filt[i]; break; }
+    }
     m->tokens[m->n_tok++] = next;
     ad_forward(m);
     return next;
@@ -555,6 +560,7 @@ int ad_generate_n(const char *prompt, int max_tokens, float temp, int top_k,
     return n;
 }
 #endif
+
 
 
 
