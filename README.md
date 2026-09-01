@@ -100,3 +100,22 @@ chat web (WASM 2MB): métricas + histórico + entrenar en vivo + contribuir
   validación mejora (nunca se degrada el modelo público)
 - **Saturation → auto-expansión Net2Net** (dim 192→384→768): el `ad_expand`
   duplica capacidad preservando la función aprendida
+
+## Documentación estudiada (referencias del proyecto)
+
+Cada fuente aportó decisiones concretas al diseño — tabla de lo aprendido:
+
+| Documento | Págs | Aportación aplicada | Estado |
+|---|---|---|---|
+| **Mathematics for Machine Learning** (Deisenroth/Faisal/Ong, Cambridge) | 417 | Gradientes de matrices + optimización: formalización del backprop y Adam implementados en `train.c`; corpus matemático (921KB) añadido al mezclador | ✅ aplicado |
+| **The Mathematics of Large Language Models** (Karpeles) | 1719 | Schedules LR (cap. 3): cosine→WSD aplicado; FFN = memoria key-value (dónde vive lo aprendido por chat); double descent = criterio de disparo de la expansión; param-counting SwiGLU | ✅ aplicado |
+| **PuRo-2B: Poor Lab's Qwen2-1.5B** (Tsinghua) | 62 | WSD schedule, CMA (promediado de checkpoints, integrado al workflow), MuonH optimizer (implementado + A/B), FP8→int8 roadmap, Cost Scaling Law | ✅ aplicado |
+| **SKILL.state** (Google + Purdue) | 16 | Estado ejecutable mutable > historial append-only: especificación de la memoria v2 del chat (hechos estructurados + últimos N turnos) | 📋 diseño v2 |
+| **TimesFM-3** (Google Research) | blog | Decodificación no-autorregresiva por patch masking: referencia para generación por bloques del engine a escala | 📋 roadmap |
+| **rohanmistry231/Mathematics-for-ML** (7 PDFs) | repo | Fuente didáctica adicional (álgebra, cálculo, probabilidad, optimización) para el mezclador nocturno | ⏳ pendiente |
+| **NELL** (CMU, Never-Ending Learning) | paper | Patrón extraer→verificar→acumular: fundamento del gate de PPL y del ciclo federado | ✅ diseño base |
+
+**Lecciones metodológicas fijadas en el camino** (ver `roadmap.md` para la
+lista completa): UTF-16 con BOM rompe gcc en CI, `python3 -c` multilínea
+dentro de YAML heredoc rompe indentación, el push del bot necesita rebase
+contra el remoto, y el gate de PPL es el único árbitro de publicación.
