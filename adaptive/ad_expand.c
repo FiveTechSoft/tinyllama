@@ -89,11 +89,38 @@ int main(int argc, char **argv) {
         size_t l2_dst = bp_off_dst + d1;
         rep_vec(w.w + l2_dst, src.w + l2_src, d0, d1);
         rep_vec(w.w + l2_dst + d1, src.w + l2_src + d0, d0, d1);
-        /* W1 [D0 x hid0] -> [D x hid1] */
+        /* W1 [D0 x hid0] -> [D x hid1] (cols: dim de entrada) */
         size_t w1_src = l2_src + 2 * d0;
         size_t w1_dst = l2_dst + 2 * d1;
-        rep_cols(w.w + w1_dst_dummy(), w.w + w1_dummy(), 0, 0, 0);
-        (void)w1_src; (void)w1_dst;
+        rep_cols(w.w + w1_dst, src.w + w1_src, d1, d0, d1);
+        /* b1 [hid0] -> [hid1] */
+        size_t b1_src = w1_src + (size_t)d0 * hid0;
+        size_t b1_dst = w1_dst + (size_t)d1 * hid1;
+        rep_vec(w.w + b1_dst, src.w + b1_src, hid0, hid1);
+        /* W2 [hid0 x D0] -> [hid1 x D] */
+        size_t w2_src = b1_src + hid0;
+        size_t w2_dst = b1_dst + hid1;
+        rep_rows(w.w + w2_dst, src.w + w2_src, hid0, hid1, d0);
+        rep_cols(w.w + w2_dst, w.w + w2_dst, hid1, d0, d1);
+        /* b2 [D0] -> [D] */
+        size_t b2_src = w2_src + (size_t)hid0 * d0;
+        size_t b2_dst = w2_dst + (size_t)hid1 * d1;
+        rep_vec(w.w + b2_dst, src.w + b2_src, d0, d1);
     }
+    /* tail: lnfg lnfb [D] */
+    size_t tf_src = src.lay.lnf_g;
+    size_t tf_dst = w.lay.lnf_g;
+    rep_vec(w.w + tf_dst, src.w + tf_src, D0, D);
+    rep_vec(w.w + tf_dst + (size_t)D, src.w + src.lay.lnf_b, D0, D);
+    /* Whead [V x D0] -> [V x D] (cols) */
+    rep_cols(w.w + w.lay.w_head, src.w + src.lay.w_head, V, D0, D);
+    /* bhead [V]: se copia directo (mismo vocab) */
+    memcpy(w.w + w.lay.b_head, src.w + src.lay.b_head,
+           (size_t)V * sizeof(float));
+
+    if (ad_save(&w, argv[2])) { fprintf(stderr, "save fail\n"); return 1; }
+    printf("expandido OK: %s\n", argv[2]);
+    ad_model_free(&src);
+    ad_model_free(&w);
     return 0;
 }
