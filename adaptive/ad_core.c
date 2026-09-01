@@ -57,12 +57,8 @@ static inline float ad_dot(const float *a, const float *b, int n) {
 }
 
 void ad_matmul(float *out, const float *W, const float *x, int R, int C) {
-    for (int r = 0; r < R; r++) {
-        const float *wr = W + (size_t)r * C;
-        float s = 0.f;
-        for (int c = 0; c < C; c++) s += wr[c] * x[c];
-        out[r] = s;
-    }
+    for (int r = 0; r < R; r++)
+        out[r] = ad_dot(W + (size_t)r * C, x, C);
 }
 
 /* out[c] = sum_r W[r,c] * x[r]   (gradiente dx de un linear) */

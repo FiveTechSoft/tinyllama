@@ -8,6 +8,11 @@
 #include <math.h>
 #include <time.h>
 
+#ifdef USE_GPU
+#include "ad_gpu.h"
+static int OPT_GPU = 0;
+#endif
+
 /* ---- opciones globales ---- */
 static int    OPT_STEPS = 2000;
 static int    OPT_T     = 96;
@@ -204,6 +209,14 @@ static double train_chunk(int steps, int batch, float lr, int total_steps) {
         g_adam_t++;
         float bc1 = 1.0f - powf(0.9f, (float)g_adam_t);
         float bc2 = 1.0f - powf(0.999f, (float)g_adam_t);
+#ifdef USE_GPU
+        if (OPT_GPU) {
+            /* GPU path: Adam runs on device, skip CPU update */
+            ad_gpu_adam_step(lr_now, 0.9f, 0.999f, 1e-8f, 0.0f);
+            total += avg / batch;
+            continue;
+        }
+#endif
         if (!g_opt_muon) {
             /* AdamW clasico para todos los tensores */
             for (size_t i = 0; i < g_nfloats; i++) {
@@ -339,6 +352,10 @@ int main(int argc, char **argv) {
             OPT_VOCAB = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--opt") && i + 1 < argc) {
             if (!strcmp(argv[++i], "muon")) g_opt_muon = 1;
+#ifdef USE_GPU
+        } else if (!strcmp(argv[i], "--gpu")) {
+            OPT_GPU = 1;
+#endif
         }
     }
     if (!data_path || (!fresh_d && !model_in)) {
@@ -380,6 +397,14 @@ int main(int argc, char **argv) {
     /* ---- buffers + gradientes + Adam ---- */
     if (train_setup()) { fprintf(stderr, "OOM setup\n"); return 3; }
 
+#ifdef USE_GPU
+    /* ---- GPU init ---- */
+    if (OPT_GPU) {
+        if (ad_gpu_init(&M)) { fprintf(stderr, "GPU init failed, falling back to CPU\n"); OPT_GPU = 0; }
+        else printf("GPU: modelo en device 0\n");
+    }
+#endif
+
     printf("b2: modelo+corpus+buffers OK (train=%zu val=%zu)\n",
            g_train_len, g_val ? g_val_len : 0);
 
@@ -401,6 +426,15 @@ int main(int argc, char **argv) {
         fflush(stdout);
     }
     double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+
+#ifdef USE_GPU
+    /* download weights from GPU before eval/save */
+    if (OPT_GPU) {
+        ad_gpu_download(&M);
+        ad_gpu_free();
+        printf("GPU: pesos descargados, device liberado\n");
+    }
+#endif
 
     /* PPL final + gate de publicacion */
     if (g_val) ppl1 = eval_ppl_val(g_val, g_val_len, OPT_EVAL);
@@ -446,6 +480,11 @@ int main(int argc, char **argv) {
  *  Wproj bproj ln2g ln2b W1 b1 W2 b2}, tail {lnfg lnfb Whead bhead}
  * ================================================================== */
 static float win_fwd_bwd(AdModel *m, const int *bts, int T, int do_bwd) {
+#ifdef USE_GPU
+    if (OPT_GPU) {
+        return ad_gpu_fwd_bwd(m, bts, T, do_bwd);
+    }
+#endif
     const int dim = m->cfg.dim, hd = m->cfg.head_dim, nh = m->cfg.n_heads;
     const int hid = m->cfg.hidden;
     const size_t d = (size_t)dim;

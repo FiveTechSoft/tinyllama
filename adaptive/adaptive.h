@@ -18,6 +18,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define AD_VOCAB_MIN 256      /* bytes + controles */
 #define AD_VOCAB_MAX 65536    /* BPE grandes */
 #define AD_VOCAB     AD_VOCAB_MIN   /* compat: default byte-level */
@@ -86,5 +90,9 @@ float ad_gauss(void);
 /* MuonH optimizer (ad_muon.c) */
 void ad_muon_apply(float *W, float *G, float *M, int R, int C, float lr);
 int  ad_muon_test(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
