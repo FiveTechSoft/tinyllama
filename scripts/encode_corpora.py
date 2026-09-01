@@ -4,7 +4,7 @@ tambien genera corpus_hf_ids, corpus_peng_ids, corpus_st_ids, corpus_ft_ids
 """
 import struct
 
-def load_vocab(path=r"adaptive\vocab.bpe"):
+def load_vocab(path="vocab.bpe"):
     toks = {}
     for l in open(path, encoding="utf-8").read().splitlines():
         p = l.split("\t")
@@ -41,10 +41,10 @@ def main():
     arr_by_id = dict(arr)
 
     jobs = [
-        (r"adaptive\corpus_hf.bin", r"adaptive\corpus_hf_ids.bin"),
-        (r"adaptive\corpus_peng.bin", r"adaptive\corpus_peng_ids.bin"),
-        (r"adaptive\corpus_st.bin", r"adaptive\corpus_st_ids.bin"),
-        (r"adaptive\corpus_ft_small.bin", r"adaptive\corpus_ft_ids.bin"),
+        ("corpus_hf.bin", "corpus_hf_ids.bin"),
+        ("corpus_peng.bin", "corpus_peng_ids.bin"),
+        ("corpus_st.bin", "corpus_st_ids.bin"),
+        ("corpus_ft_small.bin", "corpus_ft_ids.bin"),
     ]
     for src, dst in jobs:
         data = open(src, "rb").read()
