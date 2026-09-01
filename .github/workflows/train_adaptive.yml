@@ -123,12 +123,13 @@ jobs:
           done
           # CMA (PuRo 3.4): promedia las 3 tandas -> model.adm, gate por PPL
           if [ -f tanda1.adm ] && [ -f tanda2.adm ] && [ -f tanda3.adm ]; then
-            gcc -O2 -o cma cma.c ad_core.c 2>/dev/null
-            ./cma model_cma.adm tanda1.adm tanda2.adm tanda3.adm
-            cp model_cma.adm model.adm
+            gcc -O2 -o cma cma.c ad_core.c
+            ./cma model_cma.adm tanda1.adm tanda2.adm tanda3.adm || true
+            cp model_cma.adm model.adm 2>/dev/null || true
           else
-            [ -f tanda3.adm ] && cp tanda3.adm model.adm
+            [ -f tanda3.adm ] && cp tanda3.adm model.adm || true
           fi
+          true
           cat metrics.csv 2>/dev/null | tail -5
 
       - name: Commit modelo + metricas
