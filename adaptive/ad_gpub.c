@@ -59,10 +59,8 @@ int ad_gpub_lin(float *out, const float *in, const float *W, const float *bias,
      * (row-major in[BT,K] == col-major in_cm[K,BT] con ld=K)
      * W es el A del gemm (row-major W[K,N] == col-major W_cm[N,K] con ld=N)
      * out row-major [BT,N] == col-major out_cm[N,BT] (ld=N) */
-    cublasStatus_t st = cublasSgemm(gh, CUBLAS_OP_N, CUBLAS_OP_N,
-                                    N, BT, K, &alpha,
-                                    dW, N,   /* W_cm [N x K], ld = N */
-                                    dIn, K,  /* IN_cm [K x BT], ld = K */
+    cublasStatus_t st = cublasSgemm(gh, CUBLAS_OP_T, CUBLAS_OP_N,
+                                    N, BT, K, &alpha, dW, K, dIn, K,
                                     &beta, dOut, N);
     if (st != CUBLAS_STATUS_SUCCESS) {
         cudaFree(dIn); cudaFree(dW); cudaFree(dOut);
