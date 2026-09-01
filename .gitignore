@@ -14,3 +14,10 @@ finetome.parquet
 adaptive/corpus_ft.bin
 hf_finetome.jsonl
 adaptive/hf_finetome.jsonl
+adaptive/*.obj
+adaptive/*.exp
+adaptive/*.lib
+adaptive/g*.txt
+adaptive/s*.txt
+adaptive/train*.log
+adaptive/train*.err
