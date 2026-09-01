@@ -1,0 +1,26 @@
+modelo cargado: steps=12000 vocab=2048
+b2: modelo+corpus+buffers OK (train=30523204 val=30523204)
+PPL inicial: 5.65
+step 100/2000  loss=1.7058
+step 200/2000  loss=1.6987
+step 300/2000  loss=1.7009
+step 400/2000  loss=1.7019
+step 500/2000  loss=1.7019
+step 600/2000  loss=1.7039
+step 700/2000  loss=1.7043
+step 800/2000  loss=1.7020
+step 900/2000  loss=1.7000
+step 1000/2000  loss=1.7096
+step 1100/2000  loss=1.6968
+step 1200/2000  loss=1.7015
+step 1300/2000  loss=1.7027
+step 1400/2000  loss=1.7012
+step 1500/2000  loss=1.7066
+step 1600/2000  loss=1.6993
+step 1700/2000  loss=1.7057
+step 1800/2000  loss=1.6954
+step 1900/2000  loss=1.6977
+step 2000/2000  loss=1.6973
+PPL final: 5.45 (antes 5.65)
+PUBLICADO: C:\tinyllama\adaptive\model_muon_test.adm (mejora 5.65 -> 5.45)
+listo (9345.7s)

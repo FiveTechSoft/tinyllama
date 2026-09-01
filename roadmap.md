@@ -18,6 +18,20 @@
 | Chat web (Pages) | ✅ | selector TinyLlama-1.1B/Adaptativo, métricas en vivo, histórico de evolución (curvas PPL/tamaño), entrenamiento EN VIVO en navegador (WASM, loss real) + contribución automática a PR |
 | Gate de contribuciones | ✅ | PRs de navegadores evaluadas contra corpus canario; merge solo si PPL mejora |
 
+## A/B test MuonH (31-ago, resultado medido)
+
+| Optimizador | Steps | PPL antes | PPL despues | Veredicto |
+|---|---|---|---|---|
+| AdamW | 1000 | 7.79 | ~6.5 | baseline |
+| MuonH (LR 10x) | 2000 | 5.65 | 5.45 | **Adam gana esta ronda** (0.10 vs 0.70 PPL/1000) |
+
+Razon: MuonH arranca con momentum vacio sobre un modelo ya calentado con Adam. La revancha sera en **entrenamiento fresh desde cero** (donde Muon brilla en el paper PuRo). Muon queda como flag `--opt muon` mantenido, no por defecto.
+
+## Referencias tecnicas futuras (no aplicar hoy)
+
+- **TimesFM-3** (Google, forecasting): decodificacion no-autorregresiva por patch masking = misma direccion que nuestro gigakernel para generacion por bloques (roadmap de engine a escala).
+- **SKILL.state** (Google+Purdue): estado ejecutable mutable > historial append-only. **Especificacion para la memoria v2 del chat web**: en vez de concatenar turnos antiguos al prompt (degrada a 2.9M params con ctx 256), mantener lista estructurada de hechos + ultimos N turnos literales + skill spec inmutable.
+
 ## Pendientes inmediatos
 
 - [ ] **BPE completo (en curso, fase 1 lista)**: vocab.bpe 2048 aprendido ✅, encoder C ✅ (2.1-2.7 chars/token roundtrip OK), corpora convertidos a ids ✅ (`*_ids.bin`, python encoder verificado), `cfg.vocab` dinámico en el core ✅ (ad_init_fresh_v). **Fase 2 (pendiente):** train.c que consuma ids u32 directamente (hoy su loop es bytes &0xFF) + guardado/decodificación BPE en generación + corpus_math (921KB del mml-book) añadido al mezclador. Los PDFs didácticos (mml-book + repo rohanmistry231) ya aportan corpus matemático.
