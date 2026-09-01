@@ -38,18 +38,21 @@ concurrency:
 
 jobs:
   train:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gpu]
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
-      - name: Instalar GCC
-        run: sudo apt-get update && sudo apt-get install -y gcc
-
-      - name: Compilar entrenador
+      - name: Compilar entrenador (GPU)
         run: |
           cd adaptive
-          gcc -O3 -mavx2 -o train train.c ad_core.c ad_muon.c -lm
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -DUSE_GPU -c train.c -o train.o
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -DUSE_GPU -c ad_gpu.cu -o ad_gpu.o
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c ad_core.c -o ad_core.o
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c ad_muon.c -o ad_muon.o
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 train.o ad_core.o ad_muon.o ad_gpu.o -lcublas -lm -o train_gpu
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c cma.c -o cma.o
+          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 cma.o ad_core.o -lm -o cma
           gcc -O2 -o prep_data prep_data.c
           gcc -O2 -o ft_ingest ft_ingest.c
 
@@ -114,16 +117,15 @@ jobs:
           echo "punto de partida: $PUNTO"
           # entrena 3 tandas; checkpoint por tanda; CMA promedia al final
           for ciclo in 1 2 3; do
-            ./train --model "$PUNTO" --data corpus_cycle_ids.bin \
+            ./train_gpu --model "$PUNTO" --data corpus_cycle_ids.bin \
               --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 \
-              --eval 60 --out "tanda${ciclo}.adm" --vocab 2048 || \
-            ./train --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
-              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 || true
+              --eval 60 --out "tanda${ciclo}.adm" --vocab 2048 --gpu || \
+            ./train_gpu --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 --gpu || true
             PUNTO="tanda${ciclo}.adm"
           done
           # CMA (PuRo 3.4): promedia las 3 tandas -> model.adm, gate por PPL
           if [ -f tanda1.adm ] && [ -f tanda2.adm ] && [ -f tanda3.adm ]; then
-            gcc -O2 -o cma cma.c ad_core.c
             ./cma model_cma.adm tanda1.adm tanda2.adm tanda3.adm || true
             cp model_cma.adm model.adm 2>/dev/null || true
           else
