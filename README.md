@@ -65,3 +65,38 @@ gcc -O2 -march=native -o tinyllama engine/tinyllama.c -lm
 
 Código abierto, como el proyecto [dreaming](https://github.com/fivetechsoft/dreaming)
 del que deriva el motor. El modelo TinyLlama tiene su propia licencia (Apache 2.0).
+
+---
+
+# Modelo adaptativo (adaptive/)
+
+LLM propio byte/BPE-level que **se entrena solo** en GitHub Actions y mejora
+día a día. Documento completo del plan: [`roadmap.md`](roadmap.md).
+
+## Evolución medida (PPL de validación)
+
+| Fecha | Optimizador | Steps acumulados | PPL val | Notas |
+|---|---|---|---|---|
+| 08-30 | AdamW | 300 | 15.23 | primer ciclo (byte-level) |
+| 08-30 | AdamW | 1500 | 18.2→16.2 | corpus peng-mimo |
+| 08-30 | AdamW | 4500 | 13.7 | + FineTome-100k rotante |
+| 08-30 | AdamW | 12000 | **5.43** | BPE vocab 2048, dim 192×6 |
+| — | MuonH A/B | 2000 | 5.45 | Adam ganó sobre modelo calentado |
+| — | (próximas) | +9000/ciclo ×8/día | ↓ | WSD + CMA + expansión Net2Net |
+
+## Pipeline automático
+
+```
+peng-mimo nocturno (código verificado)  ┐
+FineTome-100k (rotante 15MB)            ├→ Actions 8×/día → gate PPL → commit
+open-perfectblend (rotante 10MB)        ┘        ↓
+checkpoint del PC (watcher cada 10 min) ┘        Pages redeploy
+        ↓
+chat web (WASM 2MB): métricas + histórico + entrenar en vivo + contribuir
+```
+
+- Repositorio de datos: [`fivetechsoft/peng-mimo`](https://github.com/FiveTechSoft/peng-mimo)
+- El **gate de PPL** es el árbitro: solo se publica si la perplexity de
+  validación mejora (nunca se degrada el modelo público)
+- **Saturation → auto-expansión Net2Net** (dim 192→384→768): el `ad_expand`
+  duplica capacidad preservando la función aprendida
