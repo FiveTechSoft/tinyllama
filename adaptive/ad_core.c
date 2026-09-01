@@ -440,7 +440,7 @@ int ad_step(AdModel *m, float temp, int top_k) {
             r -= s_p[s_idx[i]];
             if (r <= 0.f) { next = s_idx[i]; break; }
         }
-        if (next > 3) break;   /* token de texto valido */
+        if (next > 31) break;   /* token de texto valido */
         next = -1;
     }
     if (next < 0) return -1;
@@ -555,6 +555,7 @@ int ad_generate_n(const char *prompt, int max_tokens, float temp, int top_k,
     return n;
 }
 #endif
+
 
 
 

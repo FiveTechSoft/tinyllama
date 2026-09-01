@@ -49,7 +49,7 @@ jobs:
       - name: Compilar entrenador
         run: |
           cd adaptive
-          gcc -O3 -mavx2 -o train train.c ad_core.c -lm
+          gcc -O3 -mavx2 -o train train.c ad_core.c ad_muon.c -lm
           gcc -O2 -o prep_data prep_data.c
           gcc -O2 -o ft_ingest ft_ingest.c
 
