@@ -8,7 +8,7 @@
 #include <string.h>
 
 int main(int argc, char **argv) {
-    if (argc < 4) {
+    if (argc < 3) {
         fprintf(stderr, "uso: cma out.adm ck1.adm ck2.adm [ck3...]\n");
         return 1;
     }
