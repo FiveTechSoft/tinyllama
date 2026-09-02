@@ -34,29 +34,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compilar entrenador (GPU)
+      - name: Compilar entrenador CPU (runner sin GPU)
         run: |
           cd adaptive
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -DUSE_GPU -c train.c -o train.o
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -DUSE_GPU -c ad_gpu.cu -o ad_gpu.o
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c ad_core.c -o ad_core.o
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c ad_muon.c -o ad_muon.o
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 train.o ad_core.o ad_muon.o ad_gpu.o -lcublas -lm -o train_gpu
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 -c cma.c -o cma.o
-          /usr/local/cuda/bin/nvcc -O3 -arch=sm_86 cma.o ad_core.o -lm -o cma
+          gcc -O3 -mavx2 -o train train.c ad_core.c ad_muon.c -lm
+          gcc -O2 -o prep_data prep_data.c
+          gcc -O2 -o ft_ingest ft_ingest.c
+          gcc -O2 -o cma cma.c ad_core.c
 
-      - name: Entrenar (3 tandas GPU + CMA)
+      - name: Entrenar (3 tandas CPU + CMA)
         run: |
           cd adaptive
           cp corpus_all_ids.bin corpus_cycle_ids.bin
           echo "corpus: $(stat -c%s corpus_cycle_ids.bin) bytes"
           PUNTO="model.adm"
           for ciclo in 1 2 3; do
-            ./train_gpu --model "$PUNTO" --data corpus_cycle_ids.bin \
+            ./train --model "$PUNTO" --data corpus_cycle_ids.bin \
               --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 \
-              --eval 60 --out "tanda${ciclo}.adm" --vocab 2048 --gpu || \
-            ./train_gpu --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
-              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 --gpu || true
+              --eval 60 --out "tanda${ciclo}.adm" --vocab 2048 || \
+            ./train --fresh 192,6,6 --vocab 2048 --data corpus_cycle_ids.bin \
+              --val corpus_cycle_ids.bin --steps 3000 --batch 8 --ctx 96 || true
             PUNTO="tanda${ciclo}.adm"
           done
           if [ -f tanda1.adm ] && [ -f tanda2.adm ] && [ -f tanda3.adm ]; then
@@ -79,3 +76,4 @@ jobs:
             git pull --rebase origin main || git rebase --abort || true
             git push || (git pull --rebase origin main && git push)
           fi
+
